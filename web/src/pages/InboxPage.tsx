@@ -170,6 +170,11 @@ export function InboxPage() {
               <span className="dot" />
               <h2>{g.title} <span className="count">{data.counts[g.kind]}</span></h2>
               <span className="muted small">{g.hint}</span>
+              {g.kind === "approve" && (
+                <Link to="/triage" className="btn btn-sm btn-primary inbox-group-action">
+                  Hızlı mod <kbd className="kbd-inv">⌨</kbd>
+                </Link>
+              )}
             </header>
             <div className="inbox-list">
               {data.items.filter((i) => i.kind === g.kind).map((i) => (

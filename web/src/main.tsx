@@ -6,6 +6,7 @@ import { ReposPage } from "./pages/ReposPage";
 import { RepoPage } from "./pages/RepoPage";
 import { PullPage } from "./pages/PullPage";
 import { InboxPage } from "./pages/InboxPage";
+import { TriagePage } from "./pages/TriagePage";
 import "@fontsource-variable/inter";
 import "./styles.css";
 
@@ -16,6 +17,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         <Route element={<App />}>
           <Route index element={<ReposPage />} />
           <Route path="inbox" element={<InboxPage />} />
+          <Route path="triage" element={<TriagePage />} />
           <Route path="r/:owner/:repo" element={<RepoPage />} />
           <Route path="r/:owner/:repo/pull/:number" element={<PullPage />} />
         </Route>

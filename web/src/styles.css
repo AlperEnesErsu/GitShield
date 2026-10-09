@@ -784,3 +784,65 @@ code, .mono { font-family: var(--mono); font-size: 0.9em; }
   .inbox-row { flex-wrap: wrap; }
   .inbox-meta { width: 100%; justify-content: flex-start; padding-left: 40px; }
 }
+
+/* =====================================================================
+   Triage (keyboard quick-approve)
+   ===================================================================== */
+kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 5px; border: 1px solid var(--border-strong); border-bottom-width: 2px;
+  background: var(--surface); color: var(--text-2); font: 600 11px/1 var(--mono);
+}
+.kbd-inv { background: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.35); color: inherit; }
+.inbox-group-action { margin-left: auto; }
+.triage-queue { display: flex; gap: 4px; flex-wrap: wrap; }
+.triage-pip {
+  width: 28px; height: 6px; border-radius: 3px; border: 0; padding: 0; cursor: pointer;
+  background: var(--border-strong); transition: background-color 150ms var(--ease), transform 150ms var(--ease);
+}
+.triage-pip.done { background: var(--success); }
+.triage-pip.current { background: var(--accent); transform: scaleY(1.5); }
+.triage-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow); padding: 20px 22px; display: flex; flex-direction: column; gap: 18px;
+}
+.triage-head { display: flex; align-items: center; gap: 14px; }
+.triage-pos {
+  font-size: 12px; color: var(--text-muted); padding: 4px 8px; border-radius: 6px; background: var(--surface-3); flex: none;
+}
+.triage-title { flex: 1; min-width: 0; }
+.triage-pr { font-size: 18px; font-weight: 650; color: var(--text); letter-spacing: -0.01em; }
+.triage-summary { color: var(--text-2); line-height: 1.6; white-space: pre-wrap; }
+.triage-comments { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.triage-comment {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: var(--radius);
+  border: 1px solid var(--border); cursor: pointer; transition: border-color 120ms var(--ease), background-color 120ms var(--ease);
+}
+.triage-comment.focused { border-color: var(--accent); background: var(--accent-soft); }
+.triage-comment.excluded { opacity: 0.55; }
+.triage-check {
+  width: 18px; height: 18px; border-radius: 5px; flex: none; margin-top: 1px; display: grid; place-items: center;
+  border: 1.5px solid var(--border-strong); font-size: 11px; font-weight: 800; color: #fff;
+}
+.triage-check.on { background: var(--accent); border-color: var(--accent); }
+.triage-comment-main { flex: 1; min-width: 0; }
+.triage-comment-title { font-weight: 600; }
+.triage-comment-body { margin-top: 6px; white-space: pre-wrap; color: var(--text-2); font-size: 13px; }
+.triage-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.triage-bar.confirm { background: var(--accent-soft); border-color: var(--accent); }
+.triage-bar .btn kbd { margin-left: 4px; }
+.kbd-help {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px;
+  background: rgba(15, 17, 22, 0.45); backdrop-filter: blur(3px);
+}
+.kbd-help-card {
+  width: min(420px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); padding: 20px 22px;
+}
+.kbd-help-card dl { margin: 14px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.kbd-help-card dl div { display: flex; align-items: center; gap: 12px; }
+.kbd-help-card dt { width: 70px; flex: none; }
+.kbd-help-card dd { margin: 0; color: var(--text-2); font-size: 13px; }

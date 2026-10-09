@@ -114,7 +114,7 @@ export function PullPage() {
             </select>
           )}
         </div>
-        <ProcessStepper steps={current?.progress} />
+        <ProcessStepper review={current} />
         <NextAction review={current} onStart={start} onRetry={start} starting={starting} />
       </section>
 
