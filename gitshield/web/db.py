@@ -67,6 +67,19 @@ CREATE TABLE IF NOT EXISTS draft_issues (
     UNIQUE(repo, fingerprint)
 );
 
+CREATE TABLE IF NOT EXISTS followups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    prev_comment_id INTEGER REFERENCES review_comments(id) ON DELETE SET NULL,
+    path TEXT NOT NULL,
+    old_line INTEGER,
+    new_line INTEGER,
+    severity TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,            -- fixed | still_open | unclear
+    note TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS repo_settings (
     repo TEXT PRIMARY KEY,
     auto_review INTEGER NOT NULL DEFAULT 0,
@@ -79,14 +92,18 @@ DEFAULT_REPO_SETTINGS = {"auto_review": False, "include_drafts": False}
 
 REVIEW_COLUMNS = {"status", "error", "summary", "verdict", "recommended_verdict", "verifier_notes",
                   "provider", "model", "skipped_files", "stats", "github_review_url", "submitted_at",
-                  "progress"}
+                  "progress", "mode", "base_sha"}
 COMMENT_COLUMNS = {"body", "title", "included", "verification", "verification_note"}
 ISSUE_COLUMNS = {"title", "body", "status", "github_issue_number", "github_issue_url"}
 JSON_COLUMNS = {"skipped_files", "stats", "progress"}
 
 # Columns added after the first release; created on startup for older databases.
 MIGRATIONS = {
-    "reviews": {"progress": "TEXT NOT NULL DEFAULT '[]'"},
+    "reviews": {
+        "progress": "TEXT NOT NULL DEFAULT '[]'",
+        "mode": "TEXT NOT NULL DEFAULT 'full'",
+        "base_sha": "TEXT",
+    },
 }
 
 
@@ -170,6 +187,7 @@ class Database:
             return None
         review = _review_row(row)
         review["comments"] = self.list_comments(review_id)
+        review["followups"] = self.list_followups(review_id)
         return review
 
     def latest_reviews(self, repo: str) -> Dict[int, Dict[str, Any]]:
@@ -287,3 +305,16 @@ class Database:
     def auto_review_repos(self) -> List[Dict[str, Any]]:
         rows = self._exec("SELECT repo FROM repo_settings WHERE auto_review = 1 ORDER BY repo").fetchall()
         return [self.get_repo_settings(r["repo"]) for r in rows]
+
+    # ---- Follow-ups (did the previous review's comments get fixed?) -------------
+
+    def add_followup(self, review_id: int, **fields: Any) -> None:
+        cols = ["review_id"] + list(fields)
+        self._exec(
+            f"INSERT INTO followups ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+            [review_id] + list(fields.values()),
+        )
+
+    def list_followups(self, review_id: int) -> List[Dict[str, Any]]:
+        rows = self._exec("SELECT * FROM followups WHERE review_id = ? ORDER BY id", (review_id,)).fetchall()
+        return [dict(r) for r in rows]

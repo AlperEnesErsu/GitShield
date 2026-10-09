@@ -167,7 +167,7 @@ export interface ProgressStep {
 export interface ReviewComment {
   id: number;
   review_id: number;
-  source: "scanner" | "llm";
+  source: "scanner" | "llm" | "carried";
   path: string;
   line: number | null;
   in_diff: boolean;
@@ -180,6 +180,18 @@ export interface ReviewComment {
   verification: Verification;
   verification_note: string;
   included: boolean;
+}
+
+export interface Followup {
+  id: number;
+  prev_comment_id: number | null;
+  path: string;
+  old_line: number | null;
+  new_line: number | null;
+  severity: Severity;
+  title: string;
+  status: "fixed" | "still_open" | "unclear";
+  note: string;
 }
 
 export interface Review {
@@ -201,6 +213,9 @@ export interface Review {
   created_at: string;
   submitted_at: string | null;
   progress: ProgressStep[];
+  mode: "full" | "incremental";
+  base_sha: string | null;
+  followups: Followup[];
   comments: ReviewComment[];
 }
 
@@ -316,8 +331,8 @@ export const api = {
   issues: (repo: string) => request<Issue[]>("GET", `${repoPath(repo)}/issues`),
   draftIssues: (repo: string) => request<DraftIssue[]>("GET", `${repoPath(repo)}/draft-issues?all=true`),
   pull: (repo: string, n: number) => request<PullDetail>("GET", `${repoPath(repo)}/pulls/${n}`),
-  startReview: (repo: string, n: number) =>
-    request<{ id: number; status: ReviewStatus }>("POST", `${repoPath(repo)}/pulls/${n}/reviews`),
+  startReview: (repo: string, n: number, full = false) =>
+    request<{ id: number; status: ReviewStatus }>("POST", `${repoPath(repo)}/pulls/${n}/reviews${full ? "?full=true" : ""}`),
   review: (id: number) => request<Review>("GET", `/reviews/${id}`),
   patchReview: (id: number, patch: Partial<Pick<Review, "summary" | "verdict">>) =>
     request<Review>("PATCH", `/reviews/${id}`, patch),

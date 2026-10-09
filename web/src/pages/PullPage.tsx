@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, PullDetail, Review, ReviewComment, Verdict, Verification } from "../api";
-import { ChartCard, Series, StackedBarList } from "../components/charts";
+import { api, Followup, PullDetail, Review, ReviewComment, Verdict, Verification } from "../api";
+import { ChartCard, CompositionBar, Series, StackedBarList } from "../components/charts";
 import { ExternalIcon } from "../components/icons";
 import { NextAction, ProcessStepper } from "../components/Process";
 import { RiskPanel } from "../components/insights";
@@ -52,11 +52,11 @@ export function PullPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finished]);
 
-  const start = async () => {
+  const start = async (full = false) => {
     setStarting(true);
     setStartError(null);
     try {
-      const { id } = await api.startReview(fullName, prNumber);
+      const { id } = await api.startReview(fullName, prNumber, full);
       setReviewId(id);
       setTab("review");
     } catch (e) {
@@ -93,9 +93,16 @@ export function PullPage() {
         <div className="head-actions">
           <a className="btn" href={p.url} target="_blank" rel="noreferrer">GitHub <ExternalIcon size={14} /></a>
           {current && (
-            <button className="btn" onClick={start} disabled={starting || !canRerun}>
-              {starting ? <span className="spinner" /> : "Yeniden incele"}
-            </button>
+            <>
+              <button className="btn" onClick={() => start(true)} disabled={starting || !canRerun}
+                      title="Önceki review'ları yok sayıp tüm PR diff'ini baştan incele">
+                Baştan incele
+              </button>
+              <button className="btn" onClick={() => start()} disabled={starting || !canRerun}
+                      title="Yeni commit varsa yalnızca son incelenen commit'ten sonraki değişiklikleri incele">
+                {starting ? <span className="spinner" /> : "Yeniden incele"}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -103,7 +110,14 @@ export function PullPage() {
 
       <section className="process-card">
         <div className="process-head">
-          <h2>Süreç</h2>
+          <h2>
+            Süreç
+            {current?.mode === "incremental" && current.base_sha && (
+              <Badge tone="info" title="Yalnızca son incelenen commit'ten sonraki değişiklikler incelendi">
+                Artımlı · {current.base_sha.slice(0, 7)} → {current.head_sha.slice(0, 7)}
+              </Badge>
+            )}
+          </h2>
           {p.reviews.length > 1 && (
             <select className="input select" value={reviewId ?? ""} aria-label="Review seç"
                     onChange={(e) => setReviewId(Number(e.target.value))}>
@@ -116,7 +130,7 @@ export function PullPage() {
           )}
         </div>
         <ProcessStepper review={current} />
-        <NextAction review={current} onStart={start} onRetry={start} starting={starting} />
+        <NextAction review={current} onStart={() => start()} onRetry={() => start()} starting={starting} />
       </section>
 
       <RiskPanel risk={p.risk} ci={p.ci} />
@@ -279,6 +293,8 @@ function ReviewEditor({ review, pr, setReview, setComment, onSubmitted }: {
         </ChartCard>
       </div>
 
+      {review.followups.length > 0 && <FollowupsCard followups={review.followups} />}
+
       <div className="filters">
         {(["all", "confirmed", "uncertain", "rejected", "unverified", "included"] as Filter[])
           .filter((f) => f === "all" || f === "included" || counts[f])
@@ -388,7 +404,7 @@ function CommentCard({ comment: c, onChange, locked, compact }: {
         <SeverityBadge severity={c.severity} />
         <strong className="comment-title">{c.title}</strong>
         <VerificationBadge value={c.verification} note={c.verification_note} />
-        <Badge tone="muted">{c.source === "scanner" ? `tarayıcı · ${c.rule_id}` : `AI · ${c.category}`}</Badge>
+        <Badge tone="muted">{c.source === "scanner" ? `tarayıcı · ${c.rule_id}` : c.source === "carried" ? "önceki review" : `AI · ${c.category}`}</Badge>
       </header>
       {!compact && (
         <div className="comment-loc mono small">
@@ -518,5 +534,39 @@ function PatchLines({ patch, comments, onChange, locked }: {
         );
       })}
     </div>
+  );
+}
+
+const FOLLOWUP: Record<Followup["status"], [string, string, string]> = {
+  fixed: ["success", "✓", "Düzeltildi"],
+  still_open: ["high", "●", "Hâlâ açık"],
+  unclear: ["medium", "?", "Belirsiz"],
+};
+
+function FollowupsCard({ followups }: { followups: Followup[] }) {
+  const count = (k: Followup["status"]) => followups.filter((f) => f.status === k).length;
+  return (
+    <ChartCard title="Önceki review'daki yorumlar"
+               subtitle="Yeni commit'ler önceki yorumları çözdü mü? Dokunulmayan satırlar kesin olarak açık sayılır.">
+      <CompositionBar parts={(["fixed", "unclear", "still_open"] as const).map((k, i) => ({
+        key: k, label: FOLLOWUP[k][2], value: count(k), color: `var(--series-${[3, 1, 2][i]})`,
+      }))} unit={(v) => `${v} yorum`} />
+      <ul className="followups">
+        {followups.map((f) => {
+          const [tone, icon, label] = FOLLOWUP[f.status];
+          return (
+            <li key={f.id}>
+              <Badge tone={tone}>{icon} {label}</Badge>
+              <div className="followup-main">
+                <div><SeverityBadge severity={f.severity} /> <strong>{f.title}</strong></div>
+                <div className="muted small">
+                  <span className="mono">{f.path}:{f.new_line ?? f.old_line}</span> · {f.note}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </ChartCard>
   );
 }

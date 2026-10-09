@@ -225,6 +225,11 @@ class GitHubClient:
             f"/repos/{owner}/{repo}/pulls/{number}/files", {}, max_pages=MAX_PR_FILES // 100
         )
 
+    async def compare(self, owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
+        """Commits and per-file patches between two commits (used for incremental reviews)."""
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/compare/{base}...{head}")
+        return resp.json()
+
     async def create_review(
         self,
         owner: str,

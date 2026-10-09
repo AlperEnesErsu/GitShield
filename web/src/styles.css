@@ -900,3 +900,10 @@ kbd {
   .dep-row { flex-wrap: wrap; }
   .dep-badges { max-width: none; justify-content: flex-start; padding-left: 27px; }
 }
+
+/* Follow-ups */
+.followups { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.followups li { display: flex; align-items: flex-start; gap: 10px; }
+.followups li > .badge { flex: none; min-width: 92px; justify-content: center; }
+.followup-main { min-width: 0; }
+.followup-main .mono { overflow-wrap: anywhere; }

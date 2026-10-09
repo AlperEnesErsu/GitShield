@@ -269,13 +269,13 @@ async def get_pull(request: Request, owner: str, repo: str, number: int):
 
 
 @app.post("/api/repos/{owner}/{repo}/pulls/{number}/reviews", status_code=202)
-async def start_review(request: Request, owner: str, repo: str, number: int):
+async def start_review(request: Request, owner: str, repo: str, number: int, full: bool = False):
     client = gh(request)
     pr = await client.get_pull(owner, repo, number)
     provider = get_provider()
     review_id = begin_review(db(request), pr, f"{owner}/{repo}", provider)
     task = asyncio.create_task(
-        run_review(db(request), client, provider, review_id, owner, repo, number)
+        run_review(db(request), client, provider, review_id, owner, repo, number, force_full=full)
     )
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
