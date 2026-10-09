@@ -426,7 +426,9 @@ async def submit_review(db: Database, gh: GitHubClient, review: Dict[str, Any],
         )
     body += (
         f"\n\n---\n<sub>GitShield · {review['provider']} {review['model']} · "
-        f"{len(included)} yorum, ikinci geçişte doğrulandı ve insan onayıyla gönderildi.</sub>"
+        f"{len(included)} yorum, "
+        + ("statik taramayla kontrol edildi" if review["provider"] == "none" else "ikinci geçişte doğrulandı")
+        + " ve insan onayıyla gönderildi.</sub>"
     )
     comments = [
         {"path": c["path"], "line": c["line"], "side": "RIGHT", "body": format_comment_markdown(c)}

@@ -177,7 +177,11 @@ class Database:
         rows = self._exec(
             "SELECT r.*, "
             " (SELECT COUNT(*) FROM review_comments c WHERE c.review_id = r.id"
-            "   AND c.verification != 'rejected') AS open_comments"
+            "   AND c.verification != 'rejected') AS open_comments,"
+            " (SELECT COUNT(*) FROM review_comments c WHERE c.review_id = r.id"
+            "   AND c.verification != 'rejected' AND c.severity = 'CRITICAL') AS critical_findings,"
+            " (SELECT COUNT(*) FROM review_comments c WHERE c.review_id = r.id"
+            "   AND c.verification != 'rejected' AND c.severity = 'HIGH') AS high_findings"
             " FROM reviews r WHERE r.repo = ? AND r.id IN"
             " (SELECT MAX(id) FROM reviews WHERE repo = ? GROUP BY pr_number)",
             (repo, repo),

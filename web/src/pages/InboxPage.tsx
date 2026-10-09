@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, InboxItem, InboxKind } from "../api";
 import { RefreshIcon } from "../components/icons";
+import { CiBadge, RiskBadge } from "../components/insights";
 import { Badge, ErrorBox, Loading, SeverityBadge, VerdictBadge } from "../components/ui";
 import { timeAgo, useAsync } from "../hooks";
 import { useInbox } from "../inbox";
@@ -105,6 +106,8 @@ function ItemRow({ item, onStart, starting }: {
       </div>
       <div className="inbox-meta">
         {item.draft && <Badge tone="muted">taslak</Badge>}
+        <RiskBadge risk={item.risk} />
+        <CiBadge ci={item.ci} compact />
         {item.kind === "approve" && item.verdict && <VerdictBadge verdict={item.verdict} />}
         {item.kind === "approve" && !!item.open_comments && <span className="muted small">{item.open_comments} yorum</span>}
         <span className="muted small nowrap" title="Son güncelleme">{timeAgo(item.updated_at)}</span>

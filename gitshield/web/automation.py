@@ -6,8 +6,9 @@ from typing import Any, Dict, List, Optional, Set
 
 from gitshield.web.db import Database, now
 from gitshield.web.github import GitHubClient, GitHubError
+from gitshield.web.insights import pr_insights
 from gitshield.web.llm import get_provider
-from gitshield.web.review import begin_review, run_review
+from gitshield.web.review import begin_review, run_review, submit_review
 
 log = logging.getLogger(__name__)
 
@@ -16,8 +17,10 @@ PRIORITY = {"approve": 1, "failed": 2, "outdated": 3, "new": 4, "running": 5, "d
 MAX_CONCURRENT_REPOS = 6
 
 
-def _pull_item(kind: str, repo: str, p: Dict[str, Any], review: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _pull_item(kind: str, repo: str, p: Dict[str, Any], review: Optional[Dict[str, Any]],
+               detail: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {
+        **pr_insights(detail, review),
         "kind": kind,
         "priority": PRIORITY[kind],
         "repo": repo,
@@ -57,21 +60,23 @@ async def build_inbox(db: Database, gh: GitHubClient) -> Dict[str, Any]:
         owner, name = full_name.split("/", 1)
         async with sem:
             try:
-                return full_name, await gh.list_pulls(owner, name), None
+                pulls, details = await asyncio.gather(
+                    gh.list_pulls(owner, name), gh.open_pulls_detail(owner, name))
+                return full_name, pulls, details, None
             except GitHubError as e:
-                return full_name, [], e.message
+                return full_name, [], {}, e.message
 
     results = await asyncio.gather(*(pulls_for(r) for r in active))
     items: List[Dict[str, Any]] = []
     errors = []
-    for full_name, pulls, error in results:
+    for full_name, pulls, details, error in results:
         if error:
             errors.append({"repo": full_name, "error": error})
         latest = db.latest_reviews(full_name)
         for p in pulls:
             kind = classify(p, latest.get(p["number"]))
             if kind != "done":
-                items.append(_pull_item(kind, full_name, p, latest.get(p["number"])))
+                items.append(_pull_item(kind, full_name, p, latest.get(p["number"]), details.get(p["number"])))
 
     drafts: Dict[str, List[Dict[str, Any]]] = {}
     for d in db.list_pending_drafts():
@@ -85,8 +90,8 @@ async def build_inbox(db: Database, gh: GitHubClient) -> Dict[str, Any]:
             "updated_at": max(d["created_at"] for d in ds),
         })
 
-    # Most urgent kind first; within a kind, the oldest waiting item first.
-    items.sort(key=lambda i: (i["priority"], i["updated_at"]))
+    # Most urgent kind first; within a kind, riskiest first, then the oldest waiting.
+    items.sort(key=lambda i: (i["priority"], -((i.get("risk") or {}).get("score") or 0), i["updated_at"]))
     counts: Dict[str, int] = {}
     for i in items:
         counts[i["kind"]] = counts.get(i["kind"], 0) + 1
@@ -203,3 +208,54 @@ class AutoReviewer:
             self.current = None
             self.last_run_at = now()
         return started
+
+
+async def approve_dependency_batch(store: Database, client: GitHubClient, owner: str, repo: str,
+                                   numbers: List[int], allow_major: bool = False) -> List[Dict[str, Any]]:
+    """Approve dependency-update PRs that are green on CI and clean on the static scan.
+
+    Every guard is enforced here, not only in the UI: non-dependency PRs, failing or
+    missing CI, major bumps (unless allow_major) and PRs with HIGH/CRITICAL findings
+    are skipped with a reason.
+    """
+    full_name = f"{owner}/{repo}"
+    details = await client.open_pulls_detail(owner, repo)
+    results = []
+    for number in numbers:
+        node = details.get(number)
+        info = pr_insights(node)
+        dep = info["dependency"]
+        skip = None
+        if not node:
+            skip = "PR açık değil"
+        elif not dep:
+            skip = "Bağımlılık güncellemesi değil"
+        elif info["ci"] != "success":
+            skip = {"failure": "CI başarısız", "pending": "CI henüz bitmedi"}.get(info["ci"], "CI sonucu yok")
+        elif dep["change"] == "major" and not allow_major:
+            skip = "Major güncelleme; ayrıca onay gerekiyor"
+        if skip:
+            results.append({"number": number, "status": "skipped", "reason": skip})
+            continue
+
+        pr = await client.get_pull(owner, repo, number)
+        review_id = begin_review(store, pr, full_name, None)
+        await run_review(store, client, None, review_id, owner, repo, number)
+        review = store.get_review(review_id)
+        serious = [c for c in review["comments"] if c["severity"] in ("CRITICAL", "HIGH")]
+        if review["status"] != "ready" or serious:
+            reason = review["error"] or f"{len(serious)} yüksek önemli tarama bulgusu"
+            results.append({"number": number, "status": "skipped", "reason": reason, "review_id": review_id})
+            continue
+        versions = f" ({dep['from']} → {dep['to']})" if dep["from"] else ""
+        store.update_review(review_id, summary=(
+            f"Bağımlılık güncellemesi: **{dep['package']}**{versions}, {dep['change']}. "
+            "CI başarılı, GitShield statik taraması temiz. Toplu onayla onaylandı."
+        ))
+        try:
+            submitted = await submit_review(store, client, store.get_review(review_id), "APPROVE")
+            results.append({"number": number, "status": "approved", "url": submitted.get("html_url"),
+                            "review_id": review_id})
+        except GitHubError as e:
+            results.append({"number": number, "status": "failed", "reason": e.message, "review_id": review_id})
+    return results

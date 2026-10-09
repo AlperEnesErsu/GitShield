@@ -44,6 +44,38 @@ export interface RepoOverview {
   gitshield: { reviews: number; submitted: number; draft_issues: number };
 }
 
+export type CiState = "success" | "failure" | "pending" | "none";
+
+export interface Risk {
+  score: number;
+  level: "low" | "medium" | "high";
+  factors: { label: string; points: number }[];
+}
+
+export interface Dependency {
+  package: string;
+  from: string | null;
+  to: string | null;
+  change: "major" | "minor" | "patch" | "unknown";
+  group: boolean;
+  bot: boolean;
+}
+
+/** Risk, CI and dependency info the backend attaches to every open PR. */
+export interface PrInsights {
+  risk: Risk | null;
+  ci: CiState;
+  dependency: Dependency | null;
+}
+
+export interface BatchResult {
+  number: number;
+  status: "approved" | "skipped" | "failed";
+  reason?: string;
+  url?: string;
+  review_id?: number;
+}
+
 export interface Repo {
   full_name: string;
   owner: string;
@@ -69,7 +101,7 @@ export interface Repo {
   last_review_at: string | null;
 }
 
-export interface PullSummary {
+export interface PullSummary extends PrInsights {
   number: number;
   title: string;
   url: string;
@@ -172,7 +204,7 @@ export interface Review {
   comments: ReviewComment[];
 }
 
-export interface PullDetail {
+export interface PullDetail extends PrInsights {
   number: number;
   title: string;
   body: string;
@@ -194,7 +226,7 @@ export interface PullDetail {
 
 export type InboxKind = "approve" | "failed" | "outdated" | "new" | "running" | "drafts";
 
-export interface InboxItem {
+export interface InboxItem extends Partial<PrInsights> {
   kind: InboxKind;
   priority: number;
   repo: string;
@@ -268,6 +300,9 @@ const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
   inbox: () => request<Inbox>("GET", "/inbox"),
+  dependencyBatch: (repo: string, numbers: number[], allowMajor = false) =>
+    request<{ results: BatchResult[] }>("POST", `${repoPath(repo)}/dependency-batch`,
+      { numbers, allow_major: allowMajor }),
   automation: () => request<Automation>("GET", "/automation"),
   runAutomation: () => request<Automation>("POST", "/automation/run"),
   repoSettings: (repo: string) => request<RepoSettings>("GET", `${repoPath(repo)}/settings`),

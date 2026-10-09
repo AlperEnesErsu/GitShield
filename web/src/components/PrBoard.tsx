@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import type { PullSummary } from "../api";
 import { timeAgo } from "../hooks";
+import { CiBadge, RiskBadge } from "./insights";
 import { Badge, VerdictBadge } from "./ui";
 
 type Stage = "todo" | "running" | "approve" | "done" | "failed";
@@ -44,6 +45,8 @@ export function PrBoard({ pulls, repo, onStart, starting }: {
 }) {
   const groups = new Map<Stage, PullSummary[]>(STAGES.map((s) => [s.key, []]));
   for (const p of pulls) groups.get(stageOf(p))!.push(p);
+  // Riskiest first inside each column.
+  for (const list of groups.values()) list.sort((a, b) => (b.risk?.score ?? 0) - (a.risk?.score ?? 0));
   const visible = STAGES.filter((s) => s.key !== "failed" || groups.get("failed")!.length);
 
   return (
@@ -68,6 +71,10 @@ export function PrBoard({ pulls, repo, onStart, starting }: {
                   <span>· {timeAgo(p.updated_at)}</span>
                 </div>
                 <div className="board-card-title">{p.title}</div>
+                <div className="board-card-foot">
+                  <RiskBadge risk={p.risk} />
+                  <CiBadge ci={p.ci} compact />
+                </div>
                 <div className="board-card-foot">
                   <MiniSteps stage={stage.key} />
                   {p.draft && <Badge tone="muted">taslak</Badge>}

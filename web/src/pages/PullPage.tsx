@@ -4,6 +4,7 @@ import { api, PullDetail, Review, ReviewComment, Verdict, Verification } from ".
 import { ChartCard, Series, StackedBarList } from "../components/charts";
 import { ExternalIcon } from "../components/icons";
 import { NextAction, ProcessStepper } from "../components/Process";
+import { RiskPanel } from "../components/insights";
 import {
   Badge,
   ErrorBox,
@@ -117,6 +118,8 @@ export function PullPage() {
         <ProcessStepper review={current} />
         <NextAction review={current} onStart={start} onRetry={start} starting={starting} />
       </section>
+
+      <RiskPanel risk={p.risk} ci={p.ci} />
 
       {review.error && <ErrorBox error={review.error} onRetry={review.reload} />}
 

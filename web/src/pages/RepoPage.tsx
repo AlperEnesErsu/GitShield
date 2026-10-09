@@ -16,6 +16,7 @@ import {
 import { timeAgo, useAsync } from "../hooks";
 import { RepoOverviewSection } from "../components/RepoOverview";
 import { MiniSteps, PrBoard, stageOf } from "../components/PrBoard";
+import { CiBadge, DependencyPanel, RiskBadge } from "../components/insights";
 import { ExternalIcon, LockIcon } from "../components/icons";
 
 export function RepoPage() {
@@ -78,6 +79,17 @@ export function RepoPage() {
               <LabelChip key={l.name} label={l} />
             ))}
           </div>
+        </div>
+      ),
+    },
+    {
+      key: "risk",
+      header: "Risk",
+      sortValue: (p) => p.risk?.score ?? null,
+      render: (p) => (
+        <div className="review-cell">
+          <RiskBadge risk={p.risk} />
+          <CiBadge ci={p.ci} compact />
         </div>
       ),
     },
@@ -215,6 +227,11 @@ export function RepoPage() {
           initialSort={{ key: "updated", dir: "desc" }}
           empty="Bu repoda açık PR yok."
         />
+      )}
+
+      {pulls.data && (
+        <DependencyPanel key={pulls.data.map((p) => `${p.number}:${p.review?.status ?? ""}`).join(",")}
+                         repo={fullName} pulls={pulls.data} onDone={() => { pulls.reload(); drafts.reload(); }} />
       )}
 
       <div className="section-head"><h2>Repo özeti</h2></div>

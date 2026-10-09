@@ -83,6 +83,26 @@ MAX_REPO_PAGES = 10
 MAX_PR_FILES = 300
 REPO_CACHE_TTL_SEC = 60
 
+OPEN_PULLS_DETAIL_QUERY = """
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        additions
+        deletions
+        changedFiles
+        authorAssociation
+        author { login }
+        files(first: 100) { nodes { path additions deletions } }
+        commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
+      }
+    }
+  }
+}
+"""
+
 
 class GitHubError(Exception):
     def __init__(self, status_code: int, message: str):
@@ -175,6 +195,12 @@ class GitHubClient:
         if not data.get("repository"):
             raise GitHubError(404, f"{owner}/{repo} not found")
         return data["repository"]
+
+    async def open_pulls_detail(self, owner: str, repo: str) -> Dict[int, Dict[str, Any]]:
+        """Size, files, author association and CI rollup for every open PR, keyed by number."""
+        data = await self._graphql(OPEN_PULLS_DETAIL_QUERY, {"owner": owner, "name": repo})
+        nodes = ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
+        return {n["number"]: n for n in nodes}
 
     async def participation(self, owner: str, repo: str) -> Optional[Dict[str, List[int]]]:
         """Weekly commit counts for the last 52 weeks; None while GitHub is still computing them."""

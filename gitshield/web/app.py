@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -13,7 +13,8 @@ from gitshield.web.config import settings
 from gitshield.web.db import Database
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.llm import get_provider
-from gitshield.web.automation import AutoReviewer, build_inbox
+from gitshield.web.automation import AutoReviewer, approve_dependency_batch, build_inbox
+from gitshield.web.insights import pr_insights
 from gitshield.web.review import begin_review, comment_to_issue, run_review, submit_review
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -169,12 +170,15 @@ async def repo_overview(request: Request, owner: str, repo: str) -> Dict[str, An
 
 @app.get("/api/repos/{owner}/{repo}/pulls")
 async def list_pulls(request: Request, owner: str, repo: str, state: str = "open"):
-    pulls = await gh(request).list_pulls(owner, repo, state)
+    client = gh(request)
+    pulls, details = await asyncio.gather(
+        client.list_pulls(owner, repo, state), client.open_pulls_detail(owner, repo))
     latest = db(request).latest_reviews(f"{owner}/{repo}")
     result = []
     for p in pulls:
         review = latest.get(p["number"])
         result.append({
+            **pr_insights(details.get(p["number"]), review),
             "number": p["number"],
             "title": p["title"],
             "url": p["html_url"],
@@ -228,10 +232,12 @@ async def list_draft_issues(request: Request, owner: str, repo: str, all: bool =
 @app.get("/api/repos/{owner}/{repo}/pulls/{number}")
 async def get_pull(request: Request, owner: str, repo: str, number: int):
     client = gh(request)
-    pr, files = await asyncio.gather(
-        client.get_pull(owner, repo, number), client.list_pull_files(owner, repo, number)
+    pr, files, details = await asyncio.gather(
+        client.get_pull(owner, repo, number), client.list_pull_files(owner, repo, number),
+        client.open_pulls_detail(owner, repo),
     )
     reviews = db(request).list_pr_reviews(f"{owner}/{repo}", number)
+    insights = pr_insights(details.get(number), db(request).latest_reviews(f"{owner}/{repo}").get(number))
     latest = db(request).get_review(reviews[0]["id"]) if reviews else None
     return {
         "number": pr["number"],
@@ -258,6 +264,7 @@ async def get_pull(request: Request, owner: str, repo: str, number: int):
         "reviews": [{k: r[k] for k in ("id", "status", "verdict", "created_at", "head_sha")}
                     for r in reviews],
         "latest_review": latest,
+        **insights,
     }
 
 
@@ -335,6 +342,21 @@ async def submit(request: Request, review_id: int, body: SubmitBody):
         raise HTTPException(409, f"Review is {review['status']}, not ready")
     result = await submit_review(db(request), gh(request), review, body.event)
     return {"url": result.get("html_url"), "review": db(request).get_review(review_id)}
+
+
+# ---- Dependency batch approval ------------------------------------------------------------
+
+
+class BatchBody(BaseModel):
+    numbers: List[int]
+    allow_major: bool = False
+
+
+@app.post("/api/repos/{owner}/{repo}/dependency-batch")
+async def dependency_batch(request: Request, owner: str, repo: str, body: BatchBody):
+    results = await approve_dependency_batch(db(request), gh(request), owner, repo,
+                                             body.numbers, body.allow_major)
+    return {"results": results}
 
 
 # ---- Inbox & automation ------------------------------------------------------------------

@@ -43,6 +43,9 @@ class InboxGitHub:
     async def list_pull_files(self, owner, repo, number):
         return FILES
 
+    async def open_pulls_detail(self, owner, repo):
+        return {}
+
 
 def test_classify_states():
     p = make_pull(1, "new-sha")

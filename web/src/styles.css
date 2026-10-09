@@ -846,3 +846,57 @@ kbd {
 .kbd-help-card dl div { display: flex; align-items: center; gap: 12px; }
 .kbd-help-card dt { width: 70px; flex: none; }
 .kbd-help-card dd { margin: 0; color: var(--text-2); font-size: 13px; }
+
+/* =====================================================================
+   Risk, CI, dependency batch
+   ===================================================================== */
+.risk-meter { width: 22px; height: 4px; border-radius: 2px; background: currentColor; opacity: 0.25; position: relative; overflow: hidden; display: inline-block; }
+.risk-meter span { position: absolute; inset: 0 auto 0 0; background: currentColor; opacity: 1; border-radius: 2px; }
+.badge .risk-meter { opacity: 1; background: color-mix(in srgb, currentColor 25%, transparent); }
+.risk-panel {
+  display: flex; gap: 24px; align-items: center; flex-wrap: wrap; padding: 18px 20px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+}
+.risk-score { position: relative; width: 96px; height: 96px; flex: none; }
+.risk-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+.risk-ring circle { fill: none; stroke-width: 3.2; }
+.ring-bg { stroke: var(--surface-3); }
+.ring-fg { stroke-linecap: round; transition: stroke-dasharray 600ms var(--ease); }
+.risk-low .ring-fg { stroke: var(--success); }
+.risk-medium .ring-fg { stroke: var(--medium); }
+.risk-high .ring-fg { stroke: var(--critical); }
+.risk-number { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.risk-number strong { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
+.risk-number span { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.risk-factors { flex: 1; min-width: 260px; }
+.risk-factors-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.risk-factors-head h3 { margin-right: auto; }
+.risk-factors ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.risk-factors li { display: grid; grid-template-columns: minmax(0, 1fr) 120px 36px; align-items: center; gap: 12px; font-size: 13px; }
+.factor-label { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.factor-bar { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.factor-bar span { display: block; height: 100%; border-radius: 4px; background: var(--series-2); }
+.factor-points { text-align: right; font-weight: 640; font-variant-numeric: tabular-nums; }
+
+.dep-panel {
+  display: flex; flex-direction: column; gap: 12px; padding: 18px 20px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+}
+.dep-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.dep-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.dep-row:last-child { border-bottom: 0; }
+.dep-row:hover { background: var(--surface-2); }
+.dep-row.blocked { cursor: default; }
+.dep-row.blocked .dep-main { opacity: 0.6; }
+.dep-row input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; flex: none; }
+.dep-main { flex: 1; min-width: 0; }
+.dep-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dep-main a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dep-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 50%; }
+.dep-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); }
+.dep-bar.confirm { background: var(--accent-soft); outline: 1px solid var(--accent); }
+@media (max-width: 760px) {
+  .risk-factors li { grid-template-columns: minmax(0, 1fr) 60px 32px; }
+  .dep-row { flex-wrap: wrap; }
+  .dep-badges { max-width: none; justify-content: flex-start; padding-left: 27px; }
+}
