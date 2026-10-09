@@ -345,6 +345,8 @@ const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
   inbox: () => request<Inbox>("GET", "/inbox"),
+  notifications: () => request<{ channels: string[]; app_url: string }>("GET", "/notifications"),
+  testNotification: () => request<{ results: Record<string, string> }>("POST", "/notifications/test"),
   fixPreview: (commentId: number) => request<FixPreview>("POST", `/comments/${commentId}/fix/preview`),
   createFix: (commentId: number, start: number, end: number, replacement: string) =>
     request<{ url: string; number: number; branch: string }>("POST", `/comments/${commentId}/fix`,

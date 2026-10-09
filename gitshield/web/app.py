@@ -16,6 +16,7 @@ from gitshield.web.llm import get_provider
 from gitshield.web.automation import AutoReviewer, approve_dependency_batch, build_inbox
 from gitshield.web.fixes import FixError, create_fix_pr, preview_fix
 from gitshield.web.insights import pr_insights
+from gitshield.web.notify import app_url, channels as notify_channels, send as send_notification
 from gitshield.web.review import begin_review, comment_to_issue, run_review, submit_review
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -451,6 +452,22 @@ async def dependency_batch(request: Request, owner: str, repo: str, body: BatchB
     results = await approve_dependency_batch(db(request), gh(request), owner, repo,
                                              body.numbers, body.allow_major)
     return {"results": results}
+
+
+# ---- Notifications ------------------------------------------------------------------------
+
+
+@app.get("/api/notifications")
+async def notifications_status():
+    return {"channels": notify_channels(), "app_url": app_url()}
+
+
+@app.post("/api/notifications/test")
+async def notifications_test():
+    if not notify_channels():
+        raise HTTPException(409, "Bildirim kanalı tanımlı değil (.env: GITSHIELD_SLACK_WEBHOOK, "
+                                 "GITSHIELD_DISCORD_WEBHOOK veya GITSHIELD_TELEGRAM_BOT_TOKEN + _CHAT_ID).")
+    return {"results": await send_notification("🛡️ GitShield test bildirimi — kanal çalışıyor.")}
 
 
 # ---- Inbox & automation ------------------------------------------------------------------

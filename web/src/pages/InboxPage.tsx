@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, InboxItem, InboxKind } from "../api";
 import { RefreshIcon } from "../components/icons";
 import { CiBadge, RiskBadge } from "../components/insights";
-import { Badge, ErrorBox, Loading, SeverityBadge, VerdictBadge } from "../components/ui";
+import { Badge, ErrorBox, Loading, SeverityBadge, Switch, VerdictBadge } from "../components/ui";
 import { timeAgo, useAsync } from "../hooks";
 import { useInbox } from "../inbox";
 
@@ -63,6 +63,52 @@ function AutomationBar() {
           {busy || s.busy ? <span className="spinner" /> : "Şimdi kontrol et"}
         </button>
       )}
+    </div>
+  );
+}
+
+function NotificationsBar() {
+  const inbox = useInbox();
+  const status = useAsync(() => api.notifications(), []);
+  const [message, setMessage] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const channels = status.data?.channels ?? [];
+
+  const toggle = async (on: boolean) => {
+    setMessage(null);
+    try {
+      await inbox.setDesktopNotify(on);
+    } catch (e) {
+      setMessage((e as Error).message);
+    }
+  };
+  const test = async () => {
+    setTesting(true);
+    setMessage(null);
+    try {
+      const res = await api.testNotification();
+      setMessage(Object.entries(res.results).map(([k, v]) => `${k}: ${v === "ok" ? "gönderildi" : v}`).join(" · "));
+    } catch (e) {
+      setMessage((e as Error).message);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="auto-bar notify-bar">
+      <Switch checked={inbox.desktopNotify} onChange={toggle} label="Masaüstü bildirimleri"
+              hint="Uygulama açıkken yeni onay bekleyen ya da hata alan review'lar için bildirim gösterir." />
+      <div className="spacer" />
+      <span className="small muted">
+        Dış kanallar: {channels.length ? channels.join(", ") : "tanımlı değil (.env ile eklenir)"}
+      </span>
+      {channels.length > 0 && (
+        <button className="btn btn-sm" onClick={test} disabled={testing}>
+          {testing ? <span className="spinner" /> : "Test bildirimi gönder"}
+        </button>
+      )}
+      {message && <div className="small notify-msg">{message}</div>}
     </div>
   );
 }
@@ -156,6 +202,7 @@ export function InboxPage() {
       </div>
 
       <AutomationBar />
+      <NotificationsBar />
       {error && <ErrorBox error={error} />}
 
       {inbox.error ? (

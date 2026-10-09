@@ -940,3 +940,4 @@ kbd {
 .fix-after { background: var(--add-bg); font-family: var(--mono); font-size: 12px; min-height: 60px; }
 .fix-diff summary { cursor: pointer; font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
 @media (max-width: 760px) { .fix-grid { grid-template-columns: 1fr; } }
+.notify-bar .notify-msg { flex-basis: 100%; color: var(--text-2); }

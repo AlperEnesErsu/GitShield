@@ -14,6 +14,7 @@ from gitshield.web.config import settings
 from gitshield.web.db import Database, now
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.llm import LLMProvider
+from gitshield.web.notify import notify_review
 
 log = logging.getLogger(__name__)
 
@@ -386,7 +387,7 @@ def begin_review(db: Database, pr: Dict[str, Any], full_name: str,
 
 async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvider],
                      review_id: int, owner: str, repo: str, number: int,
-                     force_full: bool = False) -> None:
+                     force_full: bool = False, notify: bool = True) -> None:
     full_name = f"{owner}/{repo}"
     progress = Progress(db, review_id)
     try:
@@ -619,6 +620,8 @@ async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvi
         message = str(e) or e.__class__.__name__
         progress.fail_running(message)
         db.update_review(review_id, status="failed", error=message)
+    if notify:
+        await notify_review(db.get_review(review_id))
 
 
 def draft_issue_body(c: Dict[str, Any], pr: Dict[str, Any], html_base: str) -> str:

@@ -240,7 +240,7 @@ async def approve_dependency_batch(store: Database, client: GitHubClient, owner:
 
         pr = await client.get_pull(owner, repo, number)
         review_id = begin_review(store, pr, full_name, None)
-        await run_review(store, client, None, review_id, owner, repo, number)
+        await run_review(store, client, None, review_id, owner, repo, number, notify=False)
         review = store.get_review(review_id)
         serious = [c for c in review["comments"] if c["severity"] in ("CRITICAL", "HIGH")]
         if review["status"] != "ready" or serious:
