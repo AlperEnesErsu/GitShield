@@ -1,0 +1,246 @@
+"""SQLite persistence for reviews, review comments and draft issues."""
+
+import json
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo TEXT NOT NULL,
+    pr_number INTEGER NOT NULL,
+    pr_title TEXT NOT NULL DEFAULT '',
+    head_sha TEXT NOT NULL,
+    status TEXT NOT NULL,              -- running | ready | failed | submitted
+    error TEXT,
+    summary TEXT NOT NULL DEFAULT '',
+    verdict TEXT NOT NULL DEFAULT 'COMMENT',
+    recommended_verdict TEXT,
+    verifier_notes TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT 'none',
+    model TEXT NOT NULL DEFAULT '',
+    skipped_files TEXT NOT NULL DEFAULT '[]',
+    stats TEXT NOT NULL DEFAULT '{}',
+    github_review_url TEXT,
+    progress TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    submitted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_pr ON reviews(repo, pr_number);
+
+CREATE TABLE IF NOT EXISTS review_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,              -- scanner | llm
+    path TEXT NOT NULL,
+    line INTEGER,
+    in_diff INTEGER NOT NULL DEFAULT 0,
+    severity TEXT NOT NULL,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    suggestion TEXT,
+    rule_id TEXT,
+    verification TEXT NOT NULL DEFAULT 'unverified',  -- confirmed | rejected | uncertain | unverified
+    verification_note TEXT NOT NULL DEFAULT '',
+    included INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS draft_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo TEXT NOT NULL,
+    review_id INTEGER REFERENCES reviews(id) ON DELETE SET NULL,
+    comment_id INTEGER REFERENCES review_comments(id) ON DELETE SET NULL,
+    fingerprint TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',  -- draft | opened | dismissed
+    github_issue_number INTEGER,
+    github_issue_url TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(repo, fingerprint)
+);
+"""
+
+REVIEW_COLUMNS = {"status", "error", "summary", "verdict", "recommended_verdict", "verifier_notes",
+                  "provider", "model", "skipped_files", "stats", "github_review_url", "submitted_at",
+                  "progress"}
+COMMENT_COLUMNS = {"body", "title", "included", "verification", "verification_note"}
+ISSUE_COLUMNS = {"title", "body", "status", "github_issue_number", "github_issue_url"}
+JSON_COLUMNS = {"skipped_files", "stats", "progress"}
+
+# Columns added after the first release; created on startup for older databases.
+MIGRATIONS = {
+    "reviews": {"progress": "TEXT NOT NULL DEFAULT '[]'"},
+}
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _encode(key: str, value: Any) -> Any:
+    if key in JSON_COLUMNS:
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return int(value)
+    return value
+
+
+def _review_row(row: sqlite3.Row) -> Dict[str, Any]:
+    data = dict(row)
+    for key in JSON_COLUMNS:
+        data[key] = json.loads(data[key])
+    return data
+
+
+def _comment_row(row: sqlite3.Row) -> Dict[str, Any]:
+    data = dict(row)
+    data["in_diff"] = bool(data["in_diff"])
+    data["included"] = bool(data["included"])
+    return data
+
+
+class Database:
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._conn.executescript(SCHEMA)
+        for table, columns in MIGRATIONS.items():
+            existing = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+        self._conn.commit()
+        self._lock = threading.Lock()
+
+    def _exec(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
+        with self._lock:
+            cur = self._conn.execute(sql, tuple(params))
+            self._conn.commit()
+            return cur
+
+    def _update(self, table: str, row_id: int, allowed: set, fields: Dict[str, Any]) -> None:
+        fields = {k: v for k, v in fields.items() if k in allowed}
+        if table != "review_comments":
+            fields["updated_at"] = now()
+        if not fields:
+            return
+        assignments = ", ".join(f"{k} = ?" for k in fields)
+        self._exec(
+            f"UPDATE {table} SET {assignments} WHERE id = ?",
+            [_encode(k, v) for k, v in fields.items()] + [row_id],
+        )
+
+    # ---- Reviews ---------------------------------------------------------------
+
+    def create_review(self, repo: str, pr_number: int, pr_title: str, head_sha: str,
+                      provider: str, model: str) -> int:
+        ts = now()
+        cur = self._exec(
+            "INSERT INTO reviews (repo, pr_number, pr_title, head_sha, status, provider, model,"
+            " created_at, updated_at) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?)",
+            (repo, pr_number, pr_title, head_sha, provider, model, ts, ts),
+        )
+        return int(cur.lastrowid)
+
+    def update_review(self, review_id: int, **fields: Any) -> None:
+        self._update("reviews", review_id, REVIEW_COLUMNS, fields)
+
+    def get_review(self, review_id: int) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
+        if not row:
+            return None
+        review = _review_row(row)
+        review["comments"] = self.list_comments(review_id)
+        return review
+
+    def latest_reviews(self, repo: str) -> Dict[int, Dict[str, Any]]:
+        """Latest review per PR number for a repository."""
+        rows = self._exec(
+            "SELECT r.*, "
+            " (SELECT COUNT(*) FROM review_comments c WHERE c.review_id = r.id"
+            "   AND c.verification != 'rejected') AS open_comments"
+            " FROM reviews r WHERE r.repo = ? AND r.id IN"
+            " (SELECT MAX(id) FROM reviews WHERE repo = ? GROUP BY pr_number)",
+            (repo, repo),
+        ).fetchall()
+        return {row["pr_number"]: _review_row(row) for row in rows}
+
+    def list_pr_reviews(self, repo: str, pr_number: int) -> List[Dict[str, Any]]:
+        rows = self._exec(
+            "SELECT * FROM reviews WHERE repo = ? AND pr_number = ? ORDER BY id DESC",
+            (repo, pr_number),
+        ).fetchall()
+        return [_review_row(r) for r in rows]
+
+    def repo_stats(self) -> Dict[str, Dict[str, Any]]:
+        rows = self._exec(
+            "SELECT repo, COUNT(*) AS reviews, MAX(created_at) AS last_review_at,"
+            " SUM(status = 'submitted') AS submitted"
+            " FROM reviews GROUP BY repo"
+        ).fetchall()
+        stats = {r["repo"]: dict(r) for r in rows}
+        for r in self._exec(
+            "SELECT repo, COUNT(*) AS drafts FROM draft_issues WHERE status = 'draft' GROUP BY repo"
+        ).fetchall():
+            stats.setdefault(r["repo"], {"repo": r["repo"], "reviews": 0})["draft_issues"] = r["drafts"]
+        return stats
+
+    # ---- Comments --------------------------------------------------------------
+
+    def add_comment(self, review_id: int, **fields: Any) -> int:
+        cols = ["review_id"] + list(fields)
+        cur = self._exec(
+            f"INSERT INTO review_comments ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+            [review_id] + [_encode(k, v) for k, v in fields.items()],
+        )
+        return int(cur.lastrowid)
+
+    def list_comments(self, review_id: int) -> List[Dict[str, Any]]:
+        rows = self._exec(
+            "SELECT * FROM review_comments WHERE review_id = ? ORDER BY id", (review_id,)
+        ).fetchall()
+        return [_comment_row(r) for r in rows]
+
+    def get_comment(self, comment_id: int) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT * FROM review_comments WHERE id = ?", (comment_id,)).fetchone()
+        return _comment_row(row) if row else None
+
+    def update_comment(self, comment_id: int, **fields: Any) -> None:
+        self._update("review_comments", comment_id, COMMENT_COLUMNS, fields)
+
+    # ---- Draft issues ----------------------------------------------------------
+
+    def add_draft_issue(self, repo: str, review_id: Optional[int], comment_id: Optional[int],
+                        fingerprint: str, title: str, body: str, severity: str) -> Optional[int]:
+        """Insert a draft issue; returns None if the same finding already has one."""
+        ts = now()
+        cur = self._exec(
+            "INSERT OR IGNORE INTO draft_issues (repo, review_id, comment_id, fingerprint, title,"
+            " body, severity, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (repo, review_id, comment_id, fingerprint, title, body, severity, ts, ts),
+        )
+        return int(cur.lastrowid) if cur.rowcount else None
+
+    def list_draft_issues(self, repo: str, include_closed: bool = False) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM draft_issues WHERE repo = ?"
+        if not include_closed:
+            sql += " AND status = 'draft'"
+        rows = self._exec(sql + " ORDER BY id DESC", (repo,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_draft_issue(self, issue_id: int) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT * FROM draft_issues WHERE id = ?", (issue_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_draft_issue(self, issue_id: int, **fields: Any) -> None:
+        self._update("draft_issues", issue_id, ISSUE_COLUMNS, fields)

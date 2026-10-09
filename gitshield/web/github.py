@@ -1,0 +1,232 @@
+import time
+from typing import Any, Dict, List, Optional
+
+import httpx
+
+from gitshield.web.config import settings
+
+REPOS_QUERY = """
+query($cursor: String) {
+  viewer {
+    login
+    repositories(
+      first: 50
+      after: $cursor
+      affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+      ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+      orderBy: {field: PUSHED_AT, direction: DESC}
+    ) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        nameWithOwner
+        name
+        owner { login }
+        description
+        url
+        isPrivate
+        isArchived
+        isFork
+        pushedAt
+        updatedAt
+        stargazerCount
+        viewerPermission
+        forkCount
+        primaryLanguage { name color }
+        defaultBranchRef { name }
+        languages(first: 6, orderBy: {field: SIZE, direction: DESC}) {
+          totalSize
+          edges { size node { name color } }
+        }
+        pullRequests(states: OPEN) { totalCount }
+        mergedPullRequests: pullRequests(states: MERGED) { totalCount }
+        issues(states: OPEN) { totalCount }
+      }
+    }
+  }
+}
+"""
+
+REPO_OVERVIEW_QUERY = """
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    description
+    url
+    homepageUrl
+    isPrivate
+    isArchived
+    createdAt
+    pushedAt
+    diskUsage
+    stargazerCount
+    forkCount
+    watchers { totalCount }
+    licenseInfo { name }
+    defaultBranchRef {
+      name
+      target { ... on Commit { history { totalCount } } }
+    }
+    languages(first: 10, orderBy: {field: SIZE, direction: DESC}) {
+      totalSize
+      edges { size node { name color } }
+    }
+    openPullRequests: pullRequests(states: OPEN) { totalCount }
+    mergedPullRequests: pullRequests(states: MERGED) { totalCount }
+    closedPullRequests: pullRequests(states: CLOSED) { totalCount }
+    openIssues: issues(states: OPEN) { totalCount }
+    closedIssues: issues(states: CLOSED) { totalCount }
+  }
+}
+"""
+
+MAX_REPO_PAGES = 10
+MAX_PR_FILES = 300
+REPO_CACHE_TTL_SEC = 60
+
+
+class GitHubError(Exception):
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
+class GitHubClient:
+    def __init__(self, token: Optional[str] = None, base_url: Optional[str] = None):
+        self.token = token if token is not None else settings.github_token
+        self.base_url = (base_url or settings.github_api_url).rstrip("/")
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=30.0,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "GitShield-Web",
+                **({"Authorization": f"Bearer {self.token}"} if self.token else {}),
+            },
+        )
+        self._repo_cache: Optional[tuple[float, Dict[str, Any]]] = None
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        if not self.token:
+            raise GitHubError(401, "GITHUB_TOKEN is not configured.")
+        resp = await self._client.request(method, path, **kwargs)
+        if resp.status_code >= 400:
+            try:
+                detail = resp.json().get("message", resp.text)
+                errors = resp.json().get("errors")
+                if errors:
+                    detail = f"{detail}: {errors}"
+            except ValueError:
+                detail = resp.text
+            raise GitHubError(resp.status_code, detail)
+        return resp
+
+    async def _paginate(self, path: str, params: Dict[str, Any], max_pages: int = 10) -> List[Any]:
+        items: List[Any] = []
+        params = {"per_page": 100, **params}
+        for page in range(1, max_pages + 1):
+            resp = await self._request("GET", path, params={**params, "page": page})
+            batch = resp.json()
+            items.extend(batch)
+            if len(batch) < params["per_page"] or 'rel="next"' not in resp.headers.get("link", ""):
+                break
+        return items
+
+    # ---- Viewer & repositories -------------------------------------------------
+
+    async def viewer(self) -> Dict[str, Any]:
+        resp = await self._request("GET", "/user")
+        return resp.json()
+
+    async def list_repos(self, refresh: bool = False) -> Dict[str, Any]:
+        """All repositories the token can see, with open PR/issue counts (GraphQL)."""
+        if not refresh and self._repo_cache and time.monotonic() - self._repo_cache[0] < REPO_CACHE_TTL_SEC:
+            return self._repo_cache[1]
+
+        repos: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        login = ""
+        for _ in range(MAX_REPO_PAGES):
+            viewer = (await self._graphql(REPOS_QUERY, {"cursor": cursor}))["viewer"]
+            login = viewer["login"]
+            conn = viewer["repositories"]
+            repos.extend(conn["nodes"])
+            if not conn["pageInfo"]["hasNextPage"]:
+                break
+            cursor = conn["pageInfo"]["endCursor"]
+
+        result = {"login": login, "repos": repos}
+        self._repo_cache = (time.monotonic(), result)
+        return result
+
+    async def _graphql(self, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+        resp = await self._request("POST", "/graphql", json={"query": query, "variables": variables})
+        payload = resp.json()
+        if payload.get("errors"):
+            raise GitHubError(502, str(payload["errors"]))
+        return payload["data"]
+
+    async def repo_overview(self, owner: str, repo: str) -> Dict[str, Any]:
+        data = await self._graphql(REPO_OVERVIEW_QUERY, {"owner": owner, "name": repo})
+        if not data.get("repository"):
+            raise GitHubError(404, f"{owner}/{repo} not found")
+        return data["repository"]
+
+    async def participation(self, owner: str, repo: str) -> Optional[Dict[str, List[int]]]:
+        """Weekly commit counts for the last 52 weeks; None while GitHub is still computing them."""
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/stats/participation")
+        if resp.status_code == 202 or not resp.content:
+            return None
+        return resp.json()
+
+    # ---- Pull requests ---------------------------------------------------------
+
+    async def list_pulls(self, owner: str, repo: str, state: str = "open") -> List[Dict[str, Any]]:
+        return await self._paginate(
+            f"/repos/{owner}/{repo}/pulls", {"state": state, "sort": "updated", "direction": "desc"}, 3
+        )
+
+    async def get_pull(self, owner: str, repo: str, number: int) -> Dict[str, Any]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/pulls/{number}")
+        return resp.json()
+
+    async def list_pull_files(self, owner: str, repo: str, number: int) -> List[Dict[str, Any]]:
+        return await self._paginate(
+            f"/repos/{owner}/{repo}/pulls/{number}/files", {}, max_pages=MAX_PR_FILES // 100
+        )
+
+    async def create_review(
+        self,
+        owner: str,
+        repo: str,
+        number: int,
+        commit_id: str,
+        body: str,
+        event: str,
+        comments: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        resp = await self._request(
+            "POST",
+            f"/repos/{owner}/{repo}/pulls/{number}/reviews",
+            json={"commit_id": commit_id, "body": body, "event": event, "comments": comments},
+        )
+        return resp.json()
+
+    # ---- Issues ----------------------------------------------------------------
+
+    async def list_issues(self, owner: str, repo: str, state: str = "open") -> List[Dict[str, Any]]:
+        items = await self._paginate(
+            f"/repos/{owner}/{repo}/issues", {"state": state, "sort": "updated"}, 3
+        )
+        # The issues endpoint also returns pull requests; keep real issues only.
+        return [i for i in items if "pull_request" not in i]
+
+    async def create_issue(self, owner: str, repo: str, title: str, body: str) -> Dict[str, Any]:
+        resp = await self._request(
+            "POST", f"/repos/{owner}/{repo}/issues", json={"title": title, "body": body}
+        )
+        return resp.json()
