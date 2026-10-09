@@ -104,6 +104,21 @@ review'u ikinci bir LLM geçişiyle doğrular ve **senin onayınla** PR'a gönde
 - **PR sayfası:** GitShield taraması → AI review → doğrulayıcı (doğrulandı / belirsiz / reddedildi).
   Yorumları seç, düzenle, diff üzerinde satır içinde gör, onaylayıp GitHub'a gönder.
 
+**İş akışını hızlandıran özellikler (GitHub'da yok):**
+
+| Özellik | Ne yapar |
+|---|---|
+| **Bekleyenler** (`/inbox`) | Tüm repolardaki onay bekleyen review'lar, yeni commit'ler, incelenmemiş PR'lar ve taslak issue'lar tek listede, aciliyet ve risk sırasıyla. |
+| **Otomatik inceleme** | Repo sayfasındaki anahtarla açılır; yeni PR ya da commit gelince arka planda incelenir, sonuç onayını bekler. |
+| **Hızlı mod** (`/triage`) | Klavyeyle onay: `j/k` yorumlar, `x` çıkar, `m` bir daha söyleme, `a/r/c` karar, `Enter` gönder, `n` atla. |
+| **Risk skoru** | Her PR için 0-100 açıklamalı skor: boyut, hassas dosyalar, CI, yeni katkıcı, testsiz kod, major sürüm. |
+| **Bağımlılık toplu onayı** | CI'ı yeşil minor/patch Dependabot PR'ları taranıp tek tıkla onaylanır; kurallar sunucuda da uygulanır. |
+| **Artımlı inceleme** | Yeni commit'lerde yalnızca fark incelenir; önceki yorumların düzeltilip düzeltilmediği takip edilir. |
+| **Repo hafızası** | Susturulan yorumlar tekrarlanmaz; repoya özel kurallar her review'a verilir. |
+| **Düzeltme PR'ı** | Bir yorumdan önizlemeli, düzenlenebilir küçük bir düzeltme PR'ı açılır. |
+| **Bildirimler** | Masaüstü bildirimi ve Slack / Discord / Telegram. |
+| **Metrikler** (`/metrics`) | Merge süresi, açık PR yaşı, SLA'yı aşanlar ve GitShield'ın kendi gecikmeleri. |
+
 ```bash
 uv pip install -e ".[web]"
 cd web && npm install && npm run build && cd ..
