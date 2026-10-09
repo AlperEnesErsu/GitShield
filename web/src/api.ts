@@ -286,6 +286,19 @@ export interface Automation {
   repos: string[];
 }
 
+export interface MemoryItem {
+  id: number;
+  repo: string;
+  kind: "suppress" | "rule";
+  text: string;
+  rule_id: string | null;
+  path: string | null;
+  source_comment_id: number | null;
+  active: boolean;
+  hits: number;
+  created_at: string;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -315,6 +328,16 @@ const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
   inbox: () => request<Inbox>("GET", "/inbox"),
+  memory: (repo: string) => request<MemoryItem[]>("GET", `${repoPath(repo)}/memory`),
+  addRule: (repo: string, text: string) => request<MemoryItem>("POST", `${repoPath(repo)}/memory`, { text }),
+  patchMemory: (id: number, patch: Partial<Pick<MemoryItem, "text" | "active">>) =>
+    request<MemoryItem>("PATCH", `/memory/${id}`, patch),
+  deleteMemory: (id: number) =>
+    fetch(`/api/memory/${id}`, { method: "DELETE" }).then((r) => {
+      if (!r.ok) throw new ApiError(r.status, r.statusText);
+    }),
+  suppressComment: (id: number, scope: "file" | "repo") =>
+    request<{ memory: MemoryItem; comment: ReviewComment }>("POST", `/comments/${id}/suppress`, { scope }),
   dependencyBatch: (repo: string, numbers: number[], allowMajor = false) =>
     request<{ results: BatchResult[] }>("POST", `${repoPath(repo)}/dependency-batch`,
       { numbers, allow_major: allowMajor }),

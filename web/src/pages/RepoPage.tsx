@@ -17,6 +17,7 @@ import { timeAgo, useAsync } from "../hooks";
 import { RepoOverviewSection } from "../components/RepoOverview";
 import { MiniSteps, PrBoard, stageOf } from "../components/PrBoard";
 import { CiBadge, DependencyPanel, RiskBadge } from "../components/insights";
+import { MemoryPanel } from "../components/MemoryPanel";
 import { ExternalIcon, LockIcon } from "../components/icons";
 
 export function RepoPage() {
@@ -237,6 +238,8 @@ export function RepoPage() {
       <div className="section-head"><h2>Repo özeti</h2></div>
       <RepoOverviewSection overview={overview.data} error={overview.error} pulls={pulls.data}
                            onRetry={overview.reload} />
+
+      <MemoryPanel repo={fullName} />
 
       <DraftIssuesSection
         drafts={drafts.data}

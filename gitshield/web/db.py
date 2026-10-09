@@ -80,6 +80,20 @@ CREATE TABLE IF NOT EXISTS followups (
     note TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo TEXT NOT NULL,
+    kind TEXT NOT NULL,              -- suppress (do not raise again) | rule (instruction for the reviewer)
+    text TEXT NOT NULL,
+    rule_id TEXT,                    -- scanner rule a suppression applies to
+    path TEXT,                       -- NULL = whole repository
+    source_comment_id INTEGER REFERENCES review_comments(id) ON DELETE SET NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    hits INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_repo ON memory(repo);
+
 CREATE TABLE IF NOT EXISTS repo_settings (
     repo TEXT PRIMARY KEY,
     auto_review INTEGER NOT NULL DEFAULT 0,
@@ -318,3 +332,40 @@ class Database:
     def list_followups(self, review_id: int) -> List[Dict[str, Any]]:
         rows = self._exec("SELECT * FROM followups WHERE review_id = ? ORDER BY id", (review_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    # ---- Repo memory ---------------------------------------------------------------
+
+    def add_memory(self, repo: str, kind: str, text: str, rule_id: Optional[str] = None,
+                   path: Optional[str] = None, source_comment_id: Optional[int] = None) -> Dict[str, Any]:
+        cur = self._exec(
+            "INSERT INTO memory (repo, kind, text, rule_id, path, source_comment_id, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (repo, kind, text, rule_id, path, source_comment_id, now()),
+        )
+        return self.get_memory(int(cur.lastrowid))
+
+    def get_memory(self, memory_id: int) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT * FROM memory WHERE id = ?", (memory_id,)).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["active"] = bool(data["active"])
+        return data
+
+    def list_memory(self, repo: str, active_only: bool = False) -> List[Dict[str, Any]]:
+        sql = "SELECT id FROM memory WHERE repo = ?" + (" AND active = 1" if active_only else "")
+        return [self.get_memory(r["id"]) for r in self._exec(sql + " ORDER BY id DESC", (repo,)).fetchall()]
+
+    def update_memory(self, memory_id: int, **fields: Any) -> None:
+        fields = {k: v for k, v in fields.items() if k in ("text", "active") and v is not None}
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            self._exec(f"UPDATE memory SET {sets} WHERE id = ?",
+                       [_encode(k, v) for k, v in fields.items()] + [memory_id])
+
+    def delete_memory(self, memory_id: int) -> None:
+        self._exec("DELETE FROM memory WHERE id = ?", (memory_id,))
+
+    def bump_memory_hits(self, memory_ids: Iterable[int]) -> None:
+        for mid in set(memory_ids):
+            self._exec("UPDATE memory SET hits = hits + 1 WHERE id = ?", (mid,))

@@ -907,3 +907,17 @@ kbd {
 .followups li > .badge { flex: none; min-width: 92px; justify-content: center; }
 .followup-main { min-width: 0; }
 .followup-main .mono { overflow-wrap: anywhere; }
+
+/* Repo memory */
+.suppress-choice { display: inline-flex; gap: 8px; align-items: center; color: var(--text-muted); }
+.memory-form { display: flex; gap: 8px; }
+.memory-form .input { flex: 1; min-width: 0; }
+.memory-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.memory-cols h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.memory-row { display: flex; align-items: flex-start; gap: 10px; padding: 9px 11px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-2); }
+.memory-row.inactive .memory-main { opacity: 0.5; }
+.memory-row .switch-text { display: none; }
+.memory-main { flex: 1; min-width: 0; }
+.memory-text { font-size: 13px; overflow-wrap: anywhere; }
+@media (max-width: 760px) { .memory-form { flex-direction: column; } }

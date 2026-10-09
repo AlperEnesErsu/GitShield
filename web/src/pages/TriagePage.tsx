@@ -8,6 +8,7 @@ import { useInbox } from "../inbox";
 const KEYS: [string, string][] = [
   ["j / k", "Sonraki / önceki yorum"],
   ["x", "Seçili yorumu dahil et / çıkar"],
+  ["m", "Bir daha söyleme (bu dosyada; hafızaya ekler)"],
   ["a", "Onayla (approve)"],
   ["r", "Değişiklik iste"],
   ["c", "Yorum olarak gönder"],
@@ -113,6 +114,13 @@ function TriageCard({ item, position, sent, onSent, onNext, onPrev }: {
     setReview({ ...review, comments: review.comments.map((x) => (x.id === c.id ? updated : x)) });
   }, [comments, review]);
 
+  const suppress = useCallback(async (idx: number) => {
+    const c = comments[idx];
+    if (!c || !review) return;
+    const res = await api.suppressComment(c.id, "file");
+    setReview({ ...review, comments: review.comments.map((x) => (x.id === c.id ? res.comment : x)) });
+  }, [comments, review]);
+
   const submit = useCallback(async (verdict: Verdict) => {
     if (!review) return;
     setSubmitting(true);
@@ -146,13 +154,14 @@ function TriageCard({ item, position, sent, onSent, onNext, onPrev }: {
       if (key === "j") setFocus((f) => Math.min(comments.length - 1, f + 1));
       else if (key === "k") setFocus((f) => Math.max(0, f - 1));
       else if (key === "x") void toggle(focus);
+      else if (key === "m") void suppress(focus);
       else if (key === "a") setPending("APPROVE");
       else if (key === "r") setPending("REQUEST_CHANGES");
       else if (key === "c") setPending("COMMENT");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pending, submitting, sent, review, comments.length, focus, toggle, submit, onNext, onPrev, item]);
+  }, [pending, submitting, sent, review, comments.length, focus, toggle, suppress, submit, onNext, onPrev, item]);
 
   useEffect(() => {
     listRef.current?.querySelector(`[data-idx="${focus}"]`)?.scrollIntoView({ block: "nearest" });

@@ -382,6 +382,23 @@ function CommentCard({ comment: c, onChange, locked, compact }: {
     }
   };
 
+  const [suppressing, setSuppressing] = useState(false);
+  const suppress = async (scope: "file" | "repo") => {
+    setBusy(true);
+    try {
+      const res = await api.suppressComment(c.id, scope);
+      onChange?.(res.comment);
+      setNote(scope === "file"
+        ? "Hafızaya eklendi: bu dosyada bir daha söylenmeyecek."
+        : "Hafızaya eklendi: bu repoda bir daha söylenmeyecek.");
+    } catch (e) {
+      setNote((e as Error).message);
+    } finally {
+      setBusy(false);
+      setSuppressing(false);
+    }
+  };
+
   const toIssue = async () => {
     setBusy(true);
     try {
@@ -435,6 +452,19 @@ function CommentCard({ comment: c, onChange, locked, compact }: {
         <footer className="comment-actions">
           <button className="link-btn small" onClick={() => setEditing(true)}>Düzenle</button>
           <button className="link-btn small" disabled={busy} onClick={toIssue}>Taslak issue yap</button>
+          {suppressing ? (
+            <span className="suppress-choice small">
+              Bir daha söyleme:
+              <button className="link-btn small" disabled={busy} onClick={() => suppress("file")}>bu dosyada</button>
+              <button className="link-btn small" disabled={busy} onClick={() => suppress("repo")}>tüm repoda</button>
+              <button className="link-btn small muted" onClick={() => setSuppressing(false)}>vazgeç</button>
+            </span>
+          ) : (
+            <button className="link-btn small" disabled={busy} onClick={() => setSuppressing(true)}
+                    title="Yorumu çıkarır ve repo hafızasına ekler; sonraki review'larda tekrar edilmez">
+              Bunu bir daha söyleme
+            </button>
+          )}
         </footer>
       )}
     </article>
