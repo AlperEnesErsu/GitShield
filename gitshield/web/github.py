@@ -104,6 +104,16 @@ query($owner: String!, $name: String!) {
 }
 """
 
+MERGED_PULLS_QUERY = """
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: MERGED, first: 40, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title createdAt mergedAt author { login } }
+    }
+  }
+}
+"""
+
 
 class GitHubError(Exception):
     def __init__(self, status_code: int, message: str):
@@ -202,6 +212,10 @@ class GitHubClient:
         data = await self._graphql(OPEN_PULLS_DETAIL_QUERY, {"owner": owner, "name": repo})
         nodes = ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
         return {n["number"]: n for n in nodes}
+
+    async def merged_pulls(self, owner: str, repo: str) -> List[Dict[str, Any]]:
+        data = await self._graphql(MERGED_PULLS_QUERY, {"owner": owner, "name": repo})
+        return ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
 
     async def participation(self, owner: str, repo: str) -> Optional[Dict[str, List[int]]]:
         """Weekly commit counts for the last 52 weeks; None while GitHub is still computing them."""

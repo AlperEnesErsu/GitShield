@@ -45,6 +45,7 @@ function Shell() {
           <nav className="topnav">
             <NavLink to="/" end>Genel bakış</NavLink>
             <InboxLink />
+            <NavLink to="/metrics">Metrikler</NavLink>
           </nav>
           <div className="topbar-meta">
             {s && (

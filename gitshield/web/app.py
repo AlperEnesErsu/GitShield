@@ -16,6 +16,7 @@ from gitshield.web.llm import get_provider
 from gitshield.web.automation import AutoReviewer, approve_dependency_batch, build_inbox
 from gitshield.web.fixes import FixError, create_fix_pr, preview_fix
 from gitshield.web.insights import pr_insights
+from gitshield.web.metrics import build_metrics
 from gitshield.web.notify import app_url, channels as notify_channels, send as send_notification
 from gitshield.web.review import begin_review, comment_to_issue, run_review, submit_review
 
@@ -367,7 +368,7 @@ async def fix_preview(request: Request, comment_id: int):
     try:
         return await preview_fix(db(request), gh(request), get_provider(), _comment_or_404(request, comment_id))
     except FixError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @app.post("/api/comments/{comment_id}/fix", status_code=201)
@@ -376,7 +377,7 @@ async def fix_create(request: Request, comment_id: int, body: FixBody):
         return await create_fix_pr(db(request), gh(request), _comment_or_404(request, comment_id),
                                    body.start_line, body.end_line, body.replacement)
     except FixError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 # ---- Repo memory ----------------------------------------------------------------------------
@@ -452,6 +453,16 @@ async def dependency_batch(request: Request, owner: str, repo: str, body: BatchB
     results = await approve_dependency_batch(db(request), gh(request), owner, repo,
                                              body.numbers, body.allow_major)
     return {"results": results}
+
+
+# ---- Metrics ------------------------------------------------------------------------------
+
+
+@app.get("/api/metrics")
+async def metrics(request: Request, days: int = 30, sla_days: float = 3):
+    if not 1 <= days <= 365 or sla_days <= 0:
+        raise HTTPException(422, "days 1-365, sla_days > 0 olmalı")
+    return await build_metrics(db(request), gh(request), days, sla_days)
 
 
 # ---- Notifications ------------------------------------------------------------------------

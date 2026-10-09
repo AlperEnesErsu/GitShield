@@ -316,6 +316,44 @@ export interface MemoryItem {
   created_at: string;
 }
 
+export interface StalePull {
+  repo: string;
+  number: number;
+  title: string;
+  author: string;
+  age_days: number;
+  updated_at: string;
+}
+
+export interface Metrics {
+  days: number;
+  sla_days: number;
+  repos_checked: number;
+  errors: { repo: string; error: string }[];
+  merge: {
+    count: number;
+    median_hours: number | null;
+    p75_hours: number | null;
+    by_repo: { repo: string; count: number; median_hours: number | null }[];
+    weekly: { week: string; merged: number; median_hours: number | null }[];
+  };
+  open: {
+    count: number;
+    median_age_days: number | null;
+    over_sla: StalePull[];
+    buckets: { label: string; count: number }[];
+  };
+  gitshield: {
+    reviews: number;
+    submitted: number;
+    failed: number;
+    awaiting: number;
+    median_ai_seconds: number | null;
+    median_approval_minutes: number | null;
+    weekly: { week: string; reviews: number }[];
+  };
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -345,6 +383,7 @@ const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
   inbox: () => request<Inbox>("GET", "/inbox"),
+  metrics: (days: number, slaDays: number) => request<Metrics>("GET", `/metrics?days=${days}&sla_days=${slaDays}`),
   notifications: () => request<{ channels: string[]; app_url: string }>("GET", "/notifications"),
   testNotification: () => request<{ results: Record<string, string> }>("POST", "/notifications/test"),
   fixPreview: (commentId: number) => request<FixPreview>("POST", `/comments/${commentId}/fix/preview`),

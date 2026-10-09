@@ -369,7 +369,7 @@ code, .mono { font-family: var(--mono); font-size: 0.9em; }
 
 .barlist { display: flex; flex-direction: column; gap: 4px; }
 .barlist-row {
-  display: grid; grid-template-columns: minmax(90px, 34%) 1fr 44px; align-items: center; gap: 12px;
+  display: grid; grid-template-columns: minmax(90px, 34%) 1fr 56px; align-items: center; gap: 12px;
   padding: 5px 6px; margin: 0 -6px; border-radius: 7px; font-size: 13px;
   transition: background-color 120ms var(--ease);
 }

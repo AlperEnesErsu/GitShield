@@ -90,7 +90,13 @@ export interface BarRow {
   onClick?: () => void;
 }
 
-export function StackedBarList({ rows, series, empty }: { rows: BarRow[]; series: Series[]; empty?: string }) {
+export function StackedBarList({ rows, series, empty, format = formatNumber }: {
+  rows: BarRow[];
+  series: Series[];
+  empty?: string;
+  /** Formats the value column and tooltip values (defaults to a localized integer). */
+  format?: (v: number) => string;
+}) {
   const tip = useTooltip();
   const total = (r: BarRow) => series.reduce((n, s) => n + (r.values[s.key] ?? 0), 0);
   const max = Math.max(1, ...rows.map(total));
@@ -106,7 +112,7 @@ export function StackedBarList({ rows, series, empty }: { rows: BarRow[]; series
             <>
               <div className="tip-title">{r.tipTitle ?? r.key}</div>
               {series.map((s) => (
-                <TipRow key={s.key} color={s.color} label={s.label} value={formatNumber(r.values[s.key] ?? 0)} />
+                <TipRow key={s.key} color={s.color} label={s.label} value={format(r.values[s.key] ?? 0)} />
               ))}
             </>
           );
@@ -124,7 +130,7 @@ export function StackedBarList({ rows, series, empty }: { rows: BarRow[]; series
                   })}
                 </div>
               </div>
-              <div className="barlist-value">{formatNumber(t)}</div>
+              <div className="barlist-value">{format(t)}</div>
             </div>
           );
         })}
@@ -227,7 +233,7 @@ export function ColumnChart({ points, height = 180, unit = "commit", color = "va
   const max = niceMax(Math.max(0, ...points.map((p) => p.value)));
   const ticks = [0, max / 2, max];
   const slot = innerW / Math.max(1, points.length);
-  const barW = Math.max(2, slot - 2); // 2px surface gap between adjacent columns
+  const barW = Math.min(36, Math.max(2, slot - 2)); // 2px surface gap; capped so sparse series stay readable
   const y = (v: number) => pad.top + innerH - (v / max) * innerH;
 
   const monthTicks = points

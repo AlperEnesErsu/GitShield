@@ -370,3 +370,8 @@ class Database:
     def bump_memory_hits(self, memory_ids: Iterable[int]) -> None:
         for mid in set(memory_ids):
             self._exec("UPDATE memory SET hits = hits + 1 WHERE id = ?", (mid,))
+
+    def reviews_since(self, since_iso: str) -> List[Dict[str, Any]]:
+        rows = self._exec("SELECT * FROM reviews WHERE created_at >= ? ORDER BY created_at",
+                          (since_iso,)).fetchall()
+        return [_review_row(r) for r in rows]

@@ -7,7 +7,7 @@ pytest.importorskip("fastapi")
 
 from gitshield.web.db import Database
 from gitshield.web.review import map_old_line, run_review, submit_review
-from tests.test_web_review import FILES, PR, FakeGitHub
+from tests.test_web_review import PR, FakeGitHub
 
 # Old file lines 1..10; the new commit deletes line 3, rewrites line 6 and adds a line after 8.
 DELTA_PATCH = """@@ -2,3 +2,2 @@

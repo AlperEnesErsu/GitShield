@@ -100,7 +100,7 @@ def compute_risk(pr: Dict[str, Any], review: Optional[Dict[str, Any]] = None) ->
         add(f"{changed} dosyaya yayılıyor", 10)
 
     code_files = [f for f in files if not LOCKFILE.search(f)]
-    for category, label, points, pattern in SENSITIVE_PATHS:
+    for _category, label, points, pattern in SENSITIVE_PATHS:
         hits = [f for f in code_files if pattern.search(f)]
         if hits:
             add(f"{label} ({hits[0]}{' +' + str(len(hits) - 1) if len(hits) > 1 else ''})", points)
