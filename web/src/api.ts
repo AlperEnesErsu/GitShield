@@ -180,6 +180,23 @@ export interface ReviewComment {
   verification: Verification;
   verification_note: string;
   included: boolean;
+  fix_pr_url?: string | null;
+}
+
+export interface FixPreview {
+  path: string;
+  start_line: number;
+  end_line: number;
+  original: string;
+  replacement: string;
+  explanation: string;
+  diff: string;
+  base_branch: string;
+  head_sha: string;
+  branch: string;
+  can_push: boolean;
+  reason: string | null;
+  changed: boolean;
 }
 
 export interface Followup {
@@ -328,6 +345,10 @@ const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
   inbox: () => request<Inbox>("GET", "/inbox"),
+  fixPreview: (commentId: number) => request<FixPreview>("POST", `/comments/${commentId}/fix/preview`),
+  createFix: (commentId: number, start: number, end: number, replacement: string) =>
+    request<{ url: string; number: number; branch: string }>("POST", `/comments/${commentId}/fix`,
+      { start_line: start, end_line: end, replacement }),
   memory: (repo: string) => request<MemoryItem[]>("GET", `${repoPath(repo)}/memory`),
   addRule: (repo: string, text: string) => request<MemoryItem>("POST", `${repoPath(repo)}/memory`, { text }),
   patchMemory: (id: number, patch: Partial<Pick<MemoryItem, "text" | "active">>) =>

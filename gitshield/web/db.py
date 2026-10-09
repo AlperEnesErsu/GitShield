@@ -107,7 +107,7 @@ DEFAULT_REPO_SETTINGS = {"auto_review": False, "include_drafts": False}
 REVIEW_COLUMNS = {"status", "error", "summary", "verdict", "recommended_verdict", "verifier_notes",
                   "provider", "model", "skipped_files", "stats", "github_review_url", "submitted_at",
                   "progress", "mode", "base_sha"}
-COMMENT_COLUMNS = {"body", "title", "included", "verification", "verification_note"}
+COMMENT_COLUMNS = {"body", "title", "included", "verification", "verification_note", "fix_pr_url"}
 ISSUE_COLUMNS = {"title", "body", "status", "github_issue_number", "github_issue_url"}
 JSON_COLUMNS = {"skipped_files", "stats", "progress"}
 
@@ -118,6 +118,7 @@ MIGRATIONS = {
         "mode": "TEXT NOT NULL DEFAULT 'full'",
         "base_sha": "TEXT",
     },
+    "review_comments": {"fix_pr_url": "TEXT"},
 }
 
 

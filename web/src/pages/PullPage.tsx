@@ -5,6 +5,7 @@ import { ChartCard, CompositionBar, Series, StackedBarList } from "../components
 import { ExternalIcon } from "../components/icons";
 import { NextAction, ProcessStepper } from "../components/Process";
 import { RiskPanel } from "../components/insights";
+import { FixDialog } from "../components/FixDialog";
 import {
   Badge,
   ErrorBox,
@@ -383,6 +384,7 @@ function CommentCard({ comment: c, onChange, locked, compact }: {
   };
 
   const [suppressing, setSuppressing] = useState(false);
+  const [fixing, setFixing] = useState(false);
   const suppress = async (scope: "file" | "repo") => {
     setBusy(true);
     try {
@@ -448,9 +450,18 @@ function CommentCard({ comment: c, onChange, locked, compact }: {
         </div>
       )}
       {note && <div className="small muted">{note}</div>}
+      {fixing && <FixDialog comment={c} onClose={() => setFixing(false)} onCreated={(next) => onChange?.(next)} />}
       {!locked && onChange && !editing && (
         <footer className="comment-actions">
           <button className="link-btn small" onClick={() => setEditing(true)}>Düzenle</button>
+          {c.fix_pr_url ? (
+            <a className="link-btn small" href={c.fix_pr_url} target="_blank" rel="noreferrer">Düzeltme PR'ı ↗</a>
+          ) : c.line !== null && (
+            <button className="link-btn small" disabled={busy} onClick={() => setFixing(true)}
+                    title="AI bu yorumu düzelten küçük bir PR hazırlar; önce önizleme gösterilir">
+              Düzeltme PR'ı oluştur
+            </button>
+          )}
           <button className="link-btn small" disabled={busy} onClick={toIssue}>Taslak issue yap</button>
           {suppressing ? (
             <span className="suppress-choice small">

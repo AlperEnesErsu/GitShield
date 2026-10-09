@@ -14,6 +14,7 @@ from gitshield.web.db import Database
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.llm import get_provider
 from gitshield.web.automation import AutoReviewer, approve_dependency_batch, build_inbox
+from gitshield.web.fixes import FixError, create_fix_pr, preview_fix
 from gitshield.web.insights import pr_insights
 from gitshield.web.review import begin_review, comment_to_issue, run_review, submit_review
 
@@ -342,6 +343,39 @@ async def submit(request: Request, review_id: int, body: SubmitBody):
         raise HTTPException(409, f"Review is {review['status']}, not ready")
     result = await submit_review(db(request), gh(request), review, body.event)
     return {"url": result.get("html_url"), "review": db(request).get_review(review_id)}
+
+
+# ---- Fix PRs ------------------------------------------------------------------------------
+
+
+class FixBody(BaseModel):
+    start_line: int
+    end_line: int
+    replacement: str
+
+
+def _comment_or_404(request: Request, comment_id: int) -> Dict[str, Any]:
+    comment = db(request).get_comment(comment_id)
+    if not comment:
+        raise HTTPException(404, "Comment not found")
+    return comment
+
+
+@app.post("/api/comments/{comment_id}/fix/preview")
+async def fix_preview(request: Request, comment_id: int):
+    try:
+        return await preview_fix(db(request), gh(request), get_provider(), _comment_or_404(request, comment_id))
+    except FixError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/comments/{comment_id}/fix", status_code=201)
+async def fix_create(request: Request, comment_id: int, body: FixBody):
+    try:
+        return await create_fix_pr(db(request), gh(request), _comment_or_404(request, comment_id),
+                                   body.start_line, body.end_line, body.replacement)
+    except FixError as e:
+        raise HTTPException(422, str(e))
 
 
 # ---- Repo memory ----------------------------------------------------------------------------

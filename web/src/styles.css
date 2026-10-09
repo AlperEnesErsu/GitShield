@@ -921,3 +921,22 @@ kbd {
 .memory-main { flex: 1; min-width: 0; }
 .memory-text { font-size: 13px; overflow-wrap: anywhere; }
 @media (max-width: 760px) { .memory-form { flex-direction: column; } }
+
+/* Modal & fix dialog */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 16px;
+  background: rgba(15, 17, 22, 0.5); backdrop-filter: blur(3px);
+}
+.modal {
+  width: min(880px, 100%); max-height: calc(100vh - 32px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); padding: 20px 22px; display: flex; flex-direction: column; gap: 14px;
+}
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.modal-head .eyebrow { margin-bottom: 2px; }
+.fix-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fix-label { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+.fix-before { background: var(--del-bg); min-height: 60px; }
+.fix-after { background: var(--add-bg); font-family: var(--mono); font-size: 12px; min-height: 60px; }
+.fix-diff summary { cursor: pointer; font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+@media (max-width: 760px) { .fix-grid { grid-template-columns: 1fr; } }

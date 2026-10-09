@@ -1,3 +1,4 @@
+import base64
 import time
 from typing import Any, Dict, List, Optional
 
@@ -245,6 +246,35 @@ class GitHubClient:
             f"/repos/{owner}/{repo}/pulls/{number}/reviews",
             json={"commit_id": commit_id, "body": body, "event": event, "comments": comments},
         )
+        return resp.json()
+
+    # ---- Contents, branches & PR creation (fix PRs) ----------------------------------
+
+    async def get_file(self, owner: str, repo: str, path: str, ref: str) -> Dict[str, Any]:
+        """File metadata + decoded text at ``ref``."""
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/contents/{path}", params={"ref": ref})
+        data = resp.json()
+        if isinstance(data, list) or data.get("type") != "file":
+            raise GitHubError(422, f"{path} bir dosya değil")
+        data["text"] = base64.b64decode(data.get("content", "")).decode("utf-8")
+        return data
+
+    async def create_branch(self, owner: str, repo: str, branch: str, sha: str) -> None:
+        await self._request("POST", f"/repos/{owner}/{repo}/git/refs",
+                            json={"ref": f"refs/heads/{branch}", "sha": sha})
+
+    async def update_file(self, owner: str, repo: str, path: str, branch: str, text: str,
+                          blob_sha: str, message: str) -> Dict[str, Any]:
+        resp = await self._request("PUT", f"/repos/{owner}/{repo}/contents/{path}", json={
+            "message": message, "branch": branch, "sha": blob_sha,
+            "content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+        })
+        return resp.json()
+
+    async def create_pull(self, owner: str, repo: str, title: str, head: str, base: str,
+                          body: str) -> Dict[str, Any]:
+        resp = await self._request("POST", f"/repos/{owner}/{repo}/pulls",
+                                   json={"title": title, "head": head, "base": base, "body": body})
         return resp.json()
 
     # ---- Issues ----------------------------------------------------------------
