@@ -59,6 +59,10 @@ class Settings:
         default_factory=lambda: int(os.getenv("GITSHIELD_MAX_DIFF_CHARS", "400000"))
     )
 
+    # Seconds between auto-review polls of opted-in repos; 0 disables the watcher.
+    auto_review_interval: int = field(
+        default_factory=lambda: int(os.getenv("GITSHIELD_AUTO_REVIEW_INTERVAL", "300"))
+    )
     # Natural language the reviewer writes comments in.
     review_language: str = field(
         default_factory=lambda: os.getenv("GITSHIELD_REVIEW_LANGUAGE", "Turkish")

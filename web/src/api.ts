@@ -192,6 +192,53 @@ export interface PullDetail {
   latest_review: Review | null;
 }
 
+export type InboxKind = "approve" | "failed" | "outdated" | "new" | "running" | "drafts";
+
+export interface InboxItem {
+  kind: InboxKind;
+  priority: number;
+  repo: string;
+  pr_number?: number;
+  title: string;
+  author?: string;
+  author_avatar?: string;
+  draft?: boolean;
+  created_at?: string;
+  updated_at: string;
+  review_id?: number | null;
+  verdict?: Verdict | null;
+  open_comments?: number;
+  error?: string | null;
+  draft_count?: number;
+  severities?: Severity[];
+}
+
+export interface Inbox {
+  items: InboxItem[];
+  counts: Partial<Record<InboxKind, number>>;
+  actionable: number;
+  errors: { repo: string; error: string }[];
+  repos_checked: number;
+}
+
+export interface RepoSettings {
+  repo: string;
+  auto_review: boolean;
+  include_drafts: boolean;
+}
+
+export interface Automation {
+  enabled: boolean;
+  interval_sec: number;
+  busy: boolean;
+  current: string | null;
+  last_run_at: string | null;
+  next_run_in_sec: number | null;
+  last_error: string | null;
+  started_reviews: number;
+  repos: string[];
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -220,6 +267,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
+  inbox: () => request<Inbox>("GET", "/inbox"),
+  automation: () => request<Automation>("GET", "/automation"),
+  runAutomation: () => request<Automation>("POST", "/automation/run"),
+  repoSettings: (repo: string) => request<RepoSettings>("GET", `${repoPath(repo)}/settings`),
+  setRepoSettings: (repo: string, patch: Partial<Omit<RepoSettings, "repo">>) =>
+    request<RepoSettings>("PUT", `${repoPath(repo)}/settings`, patch),
   status: () => request<Status>("GET", "/status"),
   repos: (refresh = false) =>
     request<{ login: string; repos: Repo[] }>("GET", `/repos${refresh ? "?refresh=true" : ""}`),

@@ -13,7 +13,8 @@ from gitshield.web.config import settings
 from gitshield.web.db import Database
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.llm import get_provider
-from gitshield.web.review import comment_to_issue, initial_progress, run_review, submit_review
+from gitshield.web.automation import AutoReviewer, build_inbox
+from gitshield.web.review import begin_review, comment_to_issue, run_review, submit_review
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 
@@ -25,7 +26,10 @@ _tasks: Set[asyncio.Task] = set()
 async def lifespan(app: FastAPI):
     app.state.db = Database(settings.db_path)
     app.state.gh = GitHubClient()
+    app.state.watcher = AutoReviewer(app.state.db, app.state.gh, settings.auto_review_interval)
+    app.state.watcher.start()
     yield
+    await app.state.watcher.stop()
     await app.state.gh.aclose()
 
 
@@ -262,11 +266,7 @@ async def start_review(request: Request, owner: str, repo: str, number: int):
     client = gh(request)
     pr = await client.get_pull(owner, repo, number)
     provider = get_provider()
-    review_id = db(request).create_review(
-        f"{owner}/{repo}", number, pr["title"], pr["head"]["sha"],
-        provider.name if provider else "none", provider.model if provider else "",
-    )
-    db(request).update_review(review_id, progress=initial_progress())
+    review_id = begin_review(db(request), pr, f"{owner}/{repo}", provider)
     task = asyncio.create_task(
         run_review(db(request), client, provider, review_id, owner, repo, number)
     )
@@ -335,6 +335,46 @@ async def submit(request: Request, review_id: int, body: SubmitBody):
         raise HTTPException(409, f"Review is {review['status']}, not ready")
     result = await submit_review(db(request), gh(request), review, body.event)
     return {"url": result.get("html_url"), "review": db(request).get_review(review_id)}
+
+
+# ---- Inbox & automation ------------------------------------------------------------------
+
+
+@app.get("/api/inbox")
+async def inbox(request: Request) -> Dict[str, Any]:
+    return await build_inbox(db(request), gh(request))
+
+
+class RepoSettingsBody(BaseModel):
+    auto_review: Optional[bool] = None
+    include_drafts: Optional[bool] = None
+
+
+@app.get("/api/repos/{owner}/{repo}/settings")
+async def get_repo_settings(request: Request, owner: str, repo: str):
+    return db(request).get_repo_settings(f"{owner}/{repo}")
+
+
+@app.put("/api/repos/{owner}/{repo}/settings")
+async def put_repo_settings(request: Request, owner: str, repo: str, body: RepoSettingsBody):
+    result = db(request).set_repo_settings(f"{owner}/{repo}", **body.model_dump())
+    if result["auto_review"]:
+        request.app.state.watcher.trigger()
+    return result
+
+
+@app.get("/api/automation")
+async def automation_status(request: Request):
+    return request.app.state.watcher.status()
+
+
+@app.post("/api/automation/run", status_code=202)
+async def automation_run(request: Request):
+    watcher: AutoReviewer = request.app.state.watcher
+    if not watcher.enabled:
+        raise HTTPException(409, "Otomatik inceleme kapalı (GITSHIELD_AUTO_REVIEW_INTERVAL=0).")
+    watcher.trigger()
+    return watcher.status()
 
 
 # ---- Draft issues ---------------------------------------------------------------------

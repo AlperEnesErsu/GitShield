@@ -132,3 +132,23 @@ export function Stat({ label, value, tone }: { label: string; value: ReactNode; 
     </div>
   );
 }
+
+export function Switch({ checked, onChange, label, hint, disabled }: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  hint?: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <label className={`switch ${disabled ? "disabled" : ""}`}>
+      <input type="checkbox" role="switch" checked={checked} disabled={disabled}
+             onChange={(e) => onChange(e.target.checked)} />
+      <span className="switch-track" aria-hidden><span className="switch-thumb" /></span>
+      <span className="switch-text">
+        <span className="switch-label">{label}</span>
+        {hint && <span className="switch-hint">{hint}</span>}
+      </span>
+    </label>
+  );
+}

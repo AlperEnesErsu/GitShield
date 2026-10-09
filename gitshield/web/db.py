@@ -66,7 +66,16 @@ CREATE TABLE IF NOT EXISTS draft_issues (
     updated_at TEXT NOT NULL,
     UNIQUE(repo, fingerprint)
 );
+
+CREATE TABLE IF NOT EXISTS repo_settings (
+    repo TEXT PRIMARY KEY,
+    auto_review INTEGER NOT NULL DEFAULT 0,
+    include_drafts INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
+
+DEFAULT_REPO_SETTINGS = {"auto_review": False, "include_drafts": False}
 
 REVIEW_COLUMNS = {"status", "error", "summary", "verdict", "recommended_verdict", "verifier_notes",
                   "provider", "model", "skipped_files", "stats", "github_review_url", "submitted_at",
@@ -244,3 +253,33 @@ class Database:
 
     def update_draft_issue(self, issue_id: int, **fields: Any) -> None:
         self._update("draft_issues", issue_id, ISSUE_COLUMNS, fields)
+
+    def list_pending_drafts(self) -> List[Dict[str, Any]]:
+        rows = self._exec(
+            "SELECT * FROM draft_issues WHERE status = 'draft' ORDER BY id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---- Repo settings ---------------------------------------------------------
+
+    def get_repo_settings(self, repo: str) -> Dict[str, Any]:
+        row = self._exec("SELECT * FROM repo_settings WHERE repo = ?", (repo,)).fetchone()
+        if not row:
+            return {"repo": repo, **DEFAULT_REPO_SETTINGS}
+        return {"repo": repo, "auto_review": bool(row["auto_review"]),
+                "include_drafts": bool(row["include_drafts"])}
+
+    def set_repo_settings(self, repo: str, **fields: Any) -> Dict[str, Any]:
+        merged = {**self.get_repo_settings(repo), **{k: v for k, v in fields.items()
+                                                       if k in DEFAULT_REPO_SETTINGS and v is not None}}
+        self._exec(
+            "INSERT INTO repo_settings (repo, auto_review, include_drafts, updated_at) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(repo) DO UPDATE SET auto_review = excluded.auto_review,"
+            " include_drafts = excluded.include_drafts, updated_at = excluded.updated_at",
+            (repo, int(merged["auto_review"]), int(merged["include_drafts"]), now()),
+        )
+        return self.get_repo_settings(repo)
+
+    def auto_review_repos(self) -> List[Dict[str, Any]]:
+        rows = self._exec("SELECT repo FROM repo_settings WHERE auto_review = 1 ORDER BY repo").fetchall()
+        return [self.get_repo_settings(r["repo"]) for r in rows]

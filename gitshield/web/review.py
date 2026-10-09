@@ -211,6 +211,18 @@ class Progress:
 # ---- Pipeline ---------------------------------------------------------------------
 
 
+def begin_review(db: Database, pr: Dict[str, Any], full_name: str,
+                 provider: Optional[LLMProvider]) -> int:
+    """Create the review row (status running) with an all-pending progress template."""
+    review_id = db.create_review(
+        full_name, pr["number"], pr["title"], pr["head"]["sha"],
+        provider.name if provider else "none", provider.model if provider else "",
+    )
+    db.update_review(review_id, progress=initial_progress())
+    return review_id
+
+
+
 async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvider],
                      review_id: int, owner: str, repo: str, number: int) -> None:
     full_name = f"{owner}/{repo}"

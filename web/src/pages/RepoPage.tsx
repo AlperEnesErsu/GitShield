@@ -10,6 +10,7 @@ import {
   Loading,
   ReviewStatusBadge,
   SeverityBadge,
+  Switch,
   VerdictBadge,
 } from "../components/ui";
 import { timeAgo, useAsync } from "../hooks";
@@ -26,6 +27,15 @@ export function RepoPage() {
   const pulls = useAsync(() => api.pulls(fullName), [fullName]);
   const issues = useAsync(() => api.issues(fullName), [fullName]);
   const drafts = useAsync(() => api.draftIssues(fullName), [fullName]);
+  const settings = useAsync(() => api.repoSettings(fullName), [fullName]);
+  const saveSettings = async (patch: { auto_review?: boolean; include_drafts?: boolean }) => {
+    try {
+      const next = await api.setRepoSettings(fullName, patch);
+      settings.setData(() => next);
+    } catch (e) {
+      setActionError((e as Error).message);
+    }
+  };
   const [starting, setStarting] = useState<number | null>(null);
   const [view, setView] = useState<"board" | "table">("board");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -164,6 +174,18 @@ export function RepoPage() {
       </div>
 
       {actionError && <ErrorBox error={actionError} />}
+
+      {settings.data && (
+        <div className="settings-row">
+          <Switch checked={settings.data.auto_review} onChange={(v) => saveSettings({ auto_review: v })}
+                  label="Otomatik inceleme"
+                  hint="Yeni PR ya da yeni commit gelince arka planda incelenir; sonuç onayını bekler." />
+          {settings.data.auto_review && (
+            <Switch checked={settings.data.include_drafts} onChange={(v) => saveSettings({ include_drafts: v })}
+                    label="Taslak PR'ları da incele" />
+          )}
+        </div>
+      )}
 
       <div className="section-head">
         <h2>PR süreci {pulls.data && <span className="count">{pulls.data.length} açık</span>}</h2>
