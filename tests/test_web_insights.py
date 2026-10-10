@@ -99,3 +99,12 @@ def test_dependency_batch_enforces_guards(tmp_path):
 
     major = asyncio.run(approve_dependency_batch(db, gh, "acme", "app", [11], allow_major=True))
     assert major[0]["status"] == "approved"
+
+
+def test_ci_failure_weighs_less_when_diagnosis_clears_the_pr():
+    failing = node(3, "chore(deps): bump x from 1.0.0 to 1.1.0", ["package.json"], ci="FAILURE")
+    blamed = compute_risk(failing)
+    cleared = compute_risk(failing, ci_blame="environment")
+    assert blamed["score"] - cleared["score"] == 15
+    assert any("PR'ın suçu değil" in f["label"] for f in cleared["factors"])
+    assert compute_risk(failing, ci_blame="pr")["score"] == blamed["score"]

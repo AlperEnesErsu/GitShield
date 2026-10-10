@@ -460,3 +460,10 @@ class Database:
         row = self._exec("SELECT id FROM reviews WHERE repo = ? AND pr_number = ? AND status = 'running'"
                          " ORDER BY id DESC LIMIT 1", (repo, pr_number)).fetchone()
         return self.get_review(row["id"]) if row else None
+
+    def ci_verdict(self, repo: str, pr_number: int, head_sha: Optional[str]) -> Optional[str]:
+        """Blame from a cached CI diagnosis of this exact commit (pr / environment / base / ...)."""
+        if not head_sha:
+            return None
+        cached = self.get_ci_diagnosis(repo, pr_number, head_sha)
+        return (cached or {}).get("verdict", {}).get("blame")

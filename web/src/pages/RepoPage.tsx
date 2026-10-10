@@ -90,7 +90,7 @@ export function RepoPage() {
       render: (p) => (
         <div className="review-cell">
           <RiskBadge risk={p.risk} />
-          <CiBadge ci={p.ci} compact />
+          <CiBadge ci={p.ci} blame={p.ci_blame} compact />
         </div>
       ),
     },

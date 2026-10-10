@@ -18,9 +18,9 @@ MAX_CONCURRENT_REPOS = 6
 
 
 def _pull_item(kind: str, repo: str, p: Dict[str, Any], review: Optional[Dict[str, Any]],
-               detail: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+               detail: Optional[Dict[str, Any]], ci_blame: Optional[str] = None) -> Dict[str, Any]:
     return {
-        **pr_insights(detail, review),
+        **pr_insights(detail, review, ci_blame),
         "kind": kind,
         "priority": PRIORITY[kind],
         "repo": repo,
@@ -76,7 +76,8 @@ async def build_inbox(db: Database, gh: GitHubClient) -> Dict[str, Any]:
         for p in pulls:
             kind = classify(p, latest.get(p["number"]))
             if kind != "done":
-                items.append(_pull_item(kind, full_name, p, latest.get(p["number"]), details.get(p["number"])))
+                items.append(_pull_item(kind, full_name, p, latest.get(p["number"]), details.get(p["number"]),
+                                        db.ci_verdict(full_name, p["number"], p["head"]["sha"])))
 
     drafts: Dict[str, List[Dict[str, Any]]] = {}
     for d in db.list_pending_drafts():

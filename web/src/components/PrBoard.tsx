@@ -73,7 +73,7 @@ export function PrBoard({ pulls, repo, onStart, starting }: {
                 <div className="board-card-title">{p.title}</div>
                 <div className="board-card-foot">
                   <RiskBadge risk={p.risk} />
-                  <CiBadge ci={p.ci} compact />
+                  <CiBadge ci={p.ci} blame={p.ci_blame} compact />
                 </div>
                 <div className="board-card-foot">
                   <MiniSteps stage={stage.key} />

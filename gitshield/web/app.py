@@ -186,7 +186,8 @@ async def list_pulls(request: Request, owner: str, repo: str, state: str = "open
     for p in pulls:
         review = latest.get(p["number"])
         result.append({
-            **pr_insights(details.get(p["number"]), review),
+            **pr_insights(details.get(p["number"]), review,
+                          db(request).ci_verdict(f"{owner}/{repo}", p["number"], p["head"]["sha"])),
             "number": p["number"],
             "title": p["title"],
             "url": p["html_url"],
@@ -245,7 +246,8 @@ async def get_pull(request: Request, owner: str, repo: str, number: int):
         client.open_pulls_detail(owner, repo),
     )
     reviews = db(request).list_pr_reviews(f"{owner}/{repo}", number)
-    insights = pr_insights(details.get(number), db(request).latest_reviews(f"{owner}/{repo}").get(number))
+    insights = pr_insights(details.get(number), db(request).latest_reviews(f"{owner}/{repo}").get(number),
+                           db(request).ci_verdict(f"{owner}/{repo}", number, pr["head"]["sha"]))
     latest = db(request).get_review(reviews[0]["id"]) if reviews else None
     return {
         "number": pr["number"],
@@ -401,7 +403,7 @@ async def ci_diagnosis(request: Request, owner: str, repo: str, number: int,
         raise HTTPException(409, "AI ile derinleştirmek için bir LLM yapılandırılmalı.")
     result = await diagnose(client, owner, repo, pr, provider)
     if not result["pending"]:
-        store.save_ci_diagnosis(full_name, number, pr["head"]["sha"], result)
+        store.save_ci_diagnosis(full_name, number, pr["head"]["sha"], result)  # also feeds risk
     return result
 
 

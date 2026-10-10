@@ -28,8 +28,14 @@ const CI: Record<CiState, [string, string, string]> = {
   none: ["muted", "–", "CI yok"],
 };
 
-export function CiBadge({ ci, compact }: { ci: CiState | undefined; compact?: boolean }) {
+const CLEARED: Record<string, string> = { environment: "ortam", base: "hedef dal" };
+
+export function CiBadge({ ci, compact, blame }: { ci: CiState | undefined; compact?: boolean; blame?: string | null }) {
   if (!ci || (compact && ci === "none")) return null;
+  if (ci === "failure" && blame && CLEARED[blame]) {
+    // Diagnosed: failing because of the environment or the base branch, not this PR.
+    return <Badge tone="info" title={`CI kırık ama teşhis: PR'ın suçu değil (${CLEARED[blame]})`}>! CI · {CLEARED[blame]}</Badge>;
+  }
   const [tone, icon, label] = CI[ci];
   return <Badge tone={tone} title={label}>{icon} {compact ? "CI" : label}</Badge>;
 }

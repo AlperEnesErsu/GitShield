@@ -66,6 +66,8 @@ export interface PrInsights {
   risk: Risk | null;
   ci: CiState;
   dependency: Dependency | null;
+  /** Verdict of a cached CI diagnosis when CI is failing: who is to blame. */
+  ci_blame?: "pr" | "environment" | "base" | "flaky" | "unknown" | null;
 }
 
 export interface BatchResult {
