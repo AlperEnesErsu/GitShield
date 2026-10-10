@@ -374,13 +374,16 @@ class Progress:
 
 
 def begin_review(db: Database, pr: Dict[str, Any], full_name: str,
-                 provider: Optional[LLMProvider]) -> int:
-    """Create the review row (status running) with an all-pending progress template."""
+                 provider: Optional[LLMProvider], origin: str = "manual") -> int:
+    """Create the review row (status running) with an all-pending progress template.
+
+    ``origin`` records who started it: manual (the user), auto (the watcher) or batch
+    (dependency batch approval)."""
     review_id = db.create_review(
         full_name, pr["number"], pr["title"], pr["head"]["sha"],
         provider.name if provider else "none", provider.model if provider else "",
     )
-    db.update_review(review_id, progress=initial_progress())
+    db.update_review(review_id, progress=initial_progress(), origin=origin)
     return review_id
 
 

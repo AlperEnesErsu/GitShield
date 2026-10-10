@@ -388,6 +388,36 @@ export interface CiDiagnosis {
   cached_at?: string;
 }
 
+export interface Badge {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  tier: "bronze" | "silver" | "gold";
+  target: number;
+  value: number;
+  earned: boolean;
+  earned_at: string | null;
+  new: boolean;
+}
+
+export interface Gamification {
+  level: number;
+  title: string;
+  xp: number;
+  level_floor: number;
+  next_level_xp: number;
+  progress: number;
+  streak: { current: number; best: number; today: number; goal: number; at_risk: boolean };
+  heatmap: { date: string; count: number }[];
+  stats: Record<string, number>;
+  badges: Badge[];
+  new_badges: Badge[];
+}
+
+/** Fired after every successful write so progress widgets (streak, badges) can refresh. */
+export const ACTIVITY_EVENT = "gitshield:activity";
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -410,6 +440,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
     throw new ApiError(resp.status, message);
   }
+  if (method !== "GET") window.dispatchEvent(new Event(ACTIVITY_EVENT));
+  if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
 }
 
@@ -417,6 +449,9 @@ const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
   inbox: () => request<Inbox>("GET", "/inbox"),
+  gamification: () => request<Gamification>("GET", "/gamification"),
+  markBadgesSeen: () => request<void>("POST", "/gamification/seen"),
+  setDailyGoal: (goal: number) => request<Gamification>("PUT", "/gamification/goal", { goal }),
   ciDiagnosis: (repo: string, n: number, opts: { refresh?: boolean; ai?: boolean } = {}) =>
     request<CiDiagnosis>("GET", `${repoPath(repo)}/pulls/${n}/ci-diagnosis?refresh=${!!opts.refresh}&ai=${!!opts.ai}`),
   rerunJob: (repo: string, jobId: number) =>

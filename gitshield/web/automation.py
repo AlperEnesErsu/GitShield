@@ -96,6 +96,8 @@ async def build_inbox(db: Database, gh: GitHubClient) -> Dict[str, Any]:
     for i in items:
         counts[i["kind"]] = counts.get(i["kind"], 0) + 1
     actionable = sum(n for k, n in counts.items() if k != "running")
+    if actionable == 0 and not errors and active:
+        db.grant_achievement("marker:inbox-zero")
     return {"items": items, "counts": counts, "actionable": actionable, "errors": errors,
             "repos_checked": len(active)}
 
@@ -192,7 +194,7 @@ class AutoReviewer:
                     try:
                         pr = await self.gh.get_pull(owner, name, p["number"])
                         provider = get_provider()
-                        review_id = begin_review(self.db, pr, full_name, provider)
+                        review_id = begin_review(self.db, pr, full_name, provider, origin="auto")
                         # Sequential on purpose: keeps LLM usage within free-tier rate limits.
                         await run_review(self.db, self.gh, provider, review_id, owner, name, p["number"])
                         started += 1
@@ -239,7 +241,7 @@ async def approve_dependency_batch(store: Database, client: GitHubClient, owner:
             continue
 
         pr = await client.get_pull(owner, repo, number)
-        review_id = begin_review(store, pr, full_name, None)
+        review_id = begin_review(store, pr, full_name, None, origin="batch")
         await run_review(store, client, None, review_id, owner, repo, number, notify=False)
         review = store.get_review(review_id)
         serious = [c for c in review["comments"] if c["severity"] in ("CRITICAL", "HIGH")]

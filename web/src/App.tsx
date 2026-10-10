@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 import { api } from "./api";
 import { MonitorIcon, MoonIcon, ShieldIcon, SunIcon } from "./components/icons";
 import { useAsync } from "./hooks";
+import { GamificationProvider, ProgressChip } from "./gamification";
 import { InboxProvider, useInbox } from "./inbox";
 import { ThemePref, useTheme } from "./theme";
 
@@ -14,7 +15,9 @@ const THEMES: { value: ThemePref; label: string; icon: JSX.Element }[] = [
 export function App() {
   return (
     <InboxProvider>
-      <Shell />
+      <GamificationProvider>
+        <Shell />
+      </GamificationProvider>
     </InboxProvider>
   );
 }
@@ -46,8 +49,10 @@ function Shell() {
             <NavLink to="/" end>Genel bakış</NavLink>
             <InboxLink />
             <NavLink to="/metrics">Metrikler</NavLink>
+            <NavLink to="/achievements">Başarılar</NavLink>
           </nav>
           <div className="topbar-meta">
+            <ProgressChip />
             {s && (
               <span className={`pill ${s.llm.provider === "none" ? "pill-warn" : "pill-ok"}`}
                     title="LLM_PROVIDER / LLM_MODEL ile değiştirilebilir">

@@ -15,6 +15,7 @@ from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.llm import get_provider
 from gitshield.web.automation import AutoReviewer, approve_dependency_batch, build_inbox
 from gitshield.web.ci_diagnosis import diagnose
+from gitshield.web.gamification import compute as compute_gamification
 from gitshield.web.fixes import FixError, create_fix_pr, preview_fix
 from gitshield.web.insights import pr_insights
 from gitshield.web.metrics import build_metrics
@@ -346,6 +347,31 @@ async def submit(request: Request, review_id: int, body: SubmitBody):
         raise HTTPException(409, f"Review is {review['status']}, not ready")
     result = await submit_review(db(request), gh(request), review, body.event)
     return {"url": result.get("html_url"), "review": db(request).get_review(review_id)}
+
+
+# ---- Gamification -------------------------------------------------------------------------
+
+
+class GoalBody(BaseModel):
+    goal: int
+
+
+@app.get("/api/gamification")
+async def gamification(request: Request):
+    return compute_gamification(db(request))
+
+
+@app.post("/api/gamification/seen", status_code=204)
+async def gamification_seen(request: Request):
+    db(request).mark_achievements_seen()
+
+
+@app.put("/api/gamification/goal")
+async def gamification_goal(request: Request, body: GoalBody):
+    if not 1 <= body.goal <= 30:
+        raise HTTPException(422, "Günlük hedef 1-30 arası olmalı.")
+    db(request).set_setting("daily_goal", str(body.goal))
+    return compute_gamification(db(request))
 
 
 # ---- CI diagnosis --------------------------------------------------------------------------

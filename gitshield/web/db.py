@@ -103,6 +103,17 @@ CREATE TABLE IF NOT EXISTS ci_diagnoses (
     PRIMARY KEY (repo, pr_number, head_sha)
 );
 
+CREATE TABLE IF NOT EXISTS achievements (
+    id TEXT PRIMARY KEY,             -- badge id, or a marker such as inbox-zero
+    earned_at TEXT NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS repo_settings (
     repo TEXT PRIMARY KEY,
     auto_review INTEGER NOT NULL DEFAULT 0,
@@ -115,7 +126,7 @@ DEFAULT_REPO_SETTINGS = {"auto_review": False, "include_drafts": False}
 
 REVIEW_COLUMNS = {"status", "error", "summary", "verdict", "recommended_verdict", "verifier_notes",
                   "provider", "model", "skipped_files", "stats", "github_review_url", "submitted_at",
-                  "progress", "mode", "base_sha"}
+                  "progress", "mode", "base_sha", "origin"}
 COMMENT_COLUMNS = {"body", "title", "included", "verification", "verification_note", "fix_pr_url"}
 ISSUE_COLUMNS = {"title", "body", "status", "github_issue_number", "github_issue_url"}
 JSON_COLUMNS = {"skipped_files", "stats", "progress"}
@@ -126,6 +137,7 @@ MIGRATIONS = {
         "progress": "TEXT NOT NULL DEFAULT '[]'",
         "mode": "TEXT NOT NULL DEFAULT 'full'",
         "base_sha": "TEXT",
+        "origin": "TEXT NOT NULL DEFAULT 'manual'",
     },
     "review_comments": {"fix_pr_url": "TEXT"},
 }
@@ -397,3 +409,30 @@ class Database:
     def save_ci_diagnosis(self, repo: str, pr_number: int, head_sha: str, result: Dict[str, Any]) -> None:
         self._exec("INSERT OR REPLACE INTO ci_diagnoses (repo, pr_number, head_sha, result, created_at)"
                    " VALUES (?, ?, ?, ?, ?)", (repo, pr_number, head_sha, json.dumps(result), now()))
+
+    # ---- Gamification ------------------------------------------------------------------
+
+    def query(self, sql: str, params: Iterable[Any] = ()) -> List[Dict[str, Any]]:
+        """Read-only helper for aggregate queries (gamification, metrics)."""
+        return [dict(r) for r in self._exec(sql, params).fetchall()]
+
+    def achievements(self) -> Dict[str, Dict[str, Any]]:
+        return {r["id"]: {"earned_at": r["earned_at"], "seen": bool(r["seen"])}
+                for r in self._exec("SELECT * FROM achievements").fetchall()}
+
+    def grant_achievement(self, achievement_id: str, earned_at: Optional[str] = None) -> bool:
+        """Record an achievement once; returns True when it is new."""
+        cur = self._exec("INSERT OR IGNORE INTO achievements (id, earned_at) VALUES (?, ?)",
+                         (achievement_id, earned_at or now()))
+        return bool(cur.rowcount)
+
+    def mark_achievements_seen(self) -> None:
+        self._exec("UPDATE achievements SET seen = 1 WHERE seen = 0")
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        row = self._exec("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self._exec("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE"
+                   " SET value = excluded.value", (key, value))

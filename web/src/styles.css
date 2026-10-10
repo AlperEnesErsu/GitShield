@@ -975,3 +975,147 @@ kbd {
 .ci-ai p { margin: 0; }
 .ci-ai-head { display: flex; align-items: center; gap: 8px; }
 .ci-steps { margin: 0; padding-left: 20px; font-size: 13px; }
+
+/* =====================================================================
+   Gamification: progress chip, badge toast, achievements page
+   ===================================================================== */
+.progress-chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px 0 9px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text); font-size: 12px;
+  transition: border-color 150ms var(--ease), transform 150ms var(--ease);
+}
+.progress-chip:hover { text-decoration: none; border-color: var(--border-strong); transform: translateY(-1px); }
+.flame { filter: grayscale(1) opacity(0.5); transition: filter 300ms var(--ease); }
+.flame.lit { filter: none; }
+.flame.at-risk { animation: flicker 1.6s ease-in-out infinite; }
+@keyframes flicker { 50% { opacity: 0.45; transform: scale(0.9); } }
+.chip-sep { width: 1px; height: 14px; background: var(--border); }
+.lvl { font-weight: 640; color: var(--accent); }
+.xp-mini { width: 36px; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.xp-mini span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--series-3)); }
+
+.badge-toast {
+  position: fixed; right: 20px; bottom: 20px; z-index: 80; width: min(380px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  animation: toast-in 450ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(24px) scale(0.96); } }
+.badge-toast-icon {
+  font-size: 30px; width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.55), transparent 60%), var(--medal-bg, var(--accent-soft));
+  animation: medal-pop 700ms 150ms cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+@keyframes medal-pop { from { transform: scale(0.3) rotate(-30deg); } }
+.badge-toast-text { flex: 1; min-width: 0; }
+.badge-toast-kicker { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); }
+.badge-toast-name { font-weight: 680; font-size: 15px; }
+.badge-toast-desc { font-size: 12px; color: var(--text-muted); }
+.badge-toast-actions { display: flex; flex-direction: column; gap: 4px; }
+.confetti { position: absolute; inset: 0; pointer-events: none; }
+.confetti span {
+  position: absolute; top: 50%; left: 38px; width: 6px; height: 10px; border-radius: 2px; opacity: 0;
+  background: hsl(calc(var(--i) * 27deg) 85% 60%);
+  --angle: calc(var(--i) * 25.7deg);
+  animation: confetti 1100ms 120ms ease-out forwards;
+}
+@keyframes confetti {
+  0% { opacity: 1; transform: rotate(var(--angle)) translateY(0) rotate(0deg); }
+  100% { opacity: 0; transform: rotate(var(--angle)) translateY(-70px) rotate(220deg); }
+}
+.tier-bronze { --medal-bg: #f6dcc4; }
+.tier-silver { --medal-bg: #e3e7ee; }
+.tier-gold { --medal-bg: #fbe7a1; }
+:root[data-theme="dark"] .tier-bronze { --medal-bg: #5a3b24; }
+:root[data-theme="dark"] .tier-silver { --medal-bg: #3d4452; }
+:root[data-theme="dark"] .tier-gold { --medal-bg: #5c4a12; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tier-bronze { --medal-bg: #5a3b24; }
+  :root:not([data-theme="light"]) .tier-silver { --medal-bg: #3d4452; }
+  :root:not([data-theme="light"]) .tier-gold { --medal-bg: #5c4a12; }
+}
+
+.hero-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 14px; }
+.hero-card {
+  display: flex; gap: 22px; align-items: center; flex-wrap: wrap; padding: 20px 22px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+}
+.hero-card:not(.level-card):not(.streak-card) { flex-direction: column; align-items: stretch; }
+.hero-text { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 8px; }
+.hero-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.ring { position: relative; flex: none; }
+.ring svg { transform: rotate(-90deg); }
+.ring circle { fill: none; }
+.ring-track { stroke: var(--surface-3); }
+.ring-value { stroke-linecap: round; transition: stroke-dashoffset 900ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.ring-accent .ring-value { stroke: var(--accent); }
+.ring-flame .ring-value { stroke: var(--series-2); }
+.ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ring-big { font-size: 34px; font-weight: 720; letter-spacing: -0.04em; line-height: 1; }
+.ring-big small { font-size: 16px; color: var(--text-muted); font-weight: 600; }
+.ring-small { font-size: 11px; color: var(--text-muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+.xp-bar { height: 10px; border-radius: 6px; background: var(--surface-3); overflow: hidden; }
+.xp-bar span {
+  display: block; height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--accent), var(--series-3));
+  transition: width 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.xp-rules { list-style: none; margin: 4px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; }
+.streak-number { font-size: 26px; font-weight: 720; letter-spacing: -0.02em; }
+.streak-hint { font-size: 13px; font-weight: 560; color: var(--text-2); }
+.streak-hint.warn { color: var(--high); }
+.streak-hint.ok { color: var(--success); }
+.streak-card.at-risk { border-color: var(--high); }
+.goal-stepper { display: flex; align-items: center; gap: 8px; }
+.goal-stepper strong { min-width: 20px; text-align: center; }
+
+.heatmap { display: flex; flex-direction: column; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.heatmap-months, .heatmap-grid { display: flex; gap: 4px; }
+.heatmap-months span { width: 15px; flex: none; font-size: 10px; color: var(--text-muted); white-space: nowrap; overflow: visible; }
+.heatmap-week { display: flex; flex-direction: column; gap: 4px; }
+.hm { width: 15px; height: 15px; border-radius: 4px; background: var(--surface-3); display: inline-block; flex: none; }
+.hm-empty { background: transparent; }
+.hm-1 { background: color-mix(in srgb, var(--series-3) 30%, var(--surface-3)); }
+.hm-2 { background: color-mix(in srgb, var(--series-3) 55%, var(--surface-3)); }
+.hm-3 { background: color-mix(in srgb, var(--series-3) 80%, var(--surface-3)); }
+.hm-4 { background: var(--series-3); }
+.heatmap-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); }
+
+.badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.badge-card {
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 18px 14px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+  transition: transform 200ms var(--ease), box-shadow 200ms var(--ease);
+}
+.badge-card.earned:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+.badge-medal {
+  width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center; font-size: 30px;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.6), transparent 60%), var(--medal-bg);
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.08);
+}
+.badge-card.locked .badge-medal { filter: grayscale(1); opacity: 0.45; }
+.badge-card.locked .badge-name { color: var(--text-muted); }
+.badge-name { font-weight: 660; }
+.badge-desc { font-size: 12px; color: var(--text-muted); min-height: 32px; }
+.badge-meta { font-size: 11px; color: var(--success); font-weight: 600; }
+.badge-progress { position: relative; width: 100%; height: 16px; border-radius: 8px; background: var(--surface-3); overflow: hidden; }
+.badge-progress span { display: block; height: 100%; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.badge-progress em {
+  position: absolute; inset: 0; font-style: normal; font-size: 10px; font-weight: 650;
+  display: grid; place-items: center; color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge-toast, .badge-toast-icon, .confetti span, .flame.at-risk { animation: none; }
+  .confetti { display: none; }
+}
+@media (max-width: 760px) {
+  .progress-chip .xp-mini, .progress-chip .chip-sep { display: none; }
+  .xp-rules { grid-template-columns: 1fr; }
+}
+
+.calendar-row { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+.calendar-row .heatmap { flex: 1 1 auto; min-width: 0; }
+.calendar-stats { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 10px 18px; flex: 0 0 auto; }
+.calendar-stats div { padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border); }
+.calendar-stats dt { font-size: 11px; color: var(--text-muted); }
+.calendar-stats dd { margin: 2px 0 0; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
