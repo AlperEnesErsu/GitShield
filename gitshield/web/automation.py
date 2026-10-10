@@ -184,7 +184,7 @@ class AutoReviewer:
                     review = latest.get(p["number"])
                     # Skip when this exact commit was already reviewed, is running, or failed
                     # (failures are retried by the user, not in a loop).
-                    if review and review["head_sha"] == p["head"]["sha"]:
+                    if review and (review["head_sha"] == p["head"]["sha"] or review["status"] == "running"):
                         continue
                     key = f"{full_name}#{p['number']}@{p['head']['sha']}"
                     if key in self._inflight:

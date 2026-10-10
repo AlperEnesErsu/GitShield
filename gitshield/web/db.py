@@ -436,3 +436,21 @@ class Database:
     def set_setting(self, key: str, value: str) -> None:
         self._exec("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE"
                    " SET value = excluded.value", (key, value))
+
+    def fail_interrupted_reviews(self) -> int:
+        """Reviews still 'running' at startup were cut off by a shutdown; mark them failed so the
+        UI stops spinning and they can be retried."""
+        message = "Sunucu yeniden başlatıldığı için inceleme yarıda kaldı; yeniden başlat."
+        rows = self._exec("SELECT id, progress FROM reviews WHERE status = 'running'").fetchall()
+        for row in rows:
+            steps = json.loads(row["progress"] or "[]")
+            for step in steps:
+                if step["status"] == "running":
+                    step.update(status="failed", detail=message, finished_at=now())
+            self.update_review(row["id"], status="failed", error=message, progress=steps)
+        return len(rows)
+
+    def running_review(self, repo: str, pr_number: int) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT id FROM reviews WHERE repo = ? AND pr_number = ? AND status = 'running'"
+                         " ORDER BY id DESC LIMIT 1", (repo, pr_number)).fetchone()
+        return self.get_review(row["id"]) if row else None

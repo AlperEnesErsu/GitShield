@@ -178,3 +178,32 @@ def test_failure_marks_running_step_failed(tmp_path):
     assert review["status"] == "failed" and review["error"] == "quota exceeded"
     steps = {s["key"]: s["status"] for s in review["progress"]}
     assert steps["scan"] == "done" and steps["ai_review"] == "failed"
+
+
+def test_interrupted_reviews_are_failed_on_startup(tmp_path):
+    db = Database(tmp_path / "t.db")
+    rid = db.create_review("acme/app", 7, "t", "abc123", "none", "")
+    db.update_review(rid, progress=[{"key": "scan", "status": "running", "detail": "", "started_at": "x",
+                                     "finished_at": None}])
+    assert db.running_review("acme/app", 7)["id"] == rid
+    assert db.fail_interrupted_reviews() == 1
+    review = db.get_review(rid)
+    assert review["status"] == "failed" and "yeniden başlat" in review["error"]
+    assert review["progress"][0]["status"] == "failed"
+    assert db.running_review("acme/app", 7) is None
+
+
+def test_starting_a_review_twice_reuses_the_running_one(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from gitshield.web import app as app_module
+    from gitshield.web.config import settings
+
+    monkeypatch.setattr(settings, "db_path", tmp_path / "api.db")
+    monkeypatch.setattr(settings, "auto_review_interval", 0)
+    with TestClient(app_module.app, base_url="http://127.0.0.1",
+                    headers={"X-GitShield-Client": "test"}) as client:
+        rid = app_module.app.state.db.create_review("acme/app", 7, "t", "abc123", "none", "")
+        res = client.post("/api/repos/acme/app/pulls/7/reviews")
+        assert res.status_code == 202
+        assert res.json() == {"id": rid, "status": "running", "existing": True}

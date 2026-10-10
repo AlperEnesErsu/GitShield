@@ -32,6 +32,7 @@ _tasks: Set[asyncio.Task] = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.db = Database(settings.db_path)
+    app.state.db.fail_interrupted_reviews()
     app.state.gh = GitHubClient()
     app.state.watcher = AutoReviewer(app.state.db, app.state.gh, settings.auto_review_interval)
     app.state.watcher.start()
@@ -277,6 +278,10 @@ async def get_pull(request: Request, owner: str, repo: str, number: int):
 
 @app.post("/api/repos/{owner}/{repo}/pulls/{number}/reviews", status_code=202)
 async def start_review(request: Request, owner: str, repo: str, number: int, full: bool = False):
+    running = db(request).running_review(f"{owner}/{repo}", number)
+    if running:
+        # A double click or the watcher already started one: do not burn LLM quota twice.
+        return {"id": running["id"], "status": "running", "existing": True}
     client = gh(request)
     pr = await client.get_pull(owner, repo, number)
     provider = get_provider()
