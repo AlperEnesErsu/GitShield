@@ -1240,3 +1240,20 @@ kbd {
 .palette-foot kbd { height: 17px; min-width: 17px; font-size: 10px; margin: 0 1px; }
 @media (prefers-reduced-motion: reduce) { .palette, .palette-backdrop { animation: none; } }
 @media (max-width: 760px) { .palette-trigger span, .palette-trigger kbd { display: none; } .palette-foot { display: none; } }
+
+/* Skeleton loading */
+.skeleton {
+  display: flex; flex-direction: column; gap: 12px; padding: 18px 20px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+}
+.skeleton-label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.skeleton-row { display: flex; align-items: center; gap: 12px; }
+.sk {
+  display: block; border-radius: 6px;
+  --sk-base: color-mix(in srgb, var(--border-strong) 60%, var(--surface));
+  background: linear-gradient(90deg, var(--sk-base) 0%, var(--surface-2) 45%, var(--sk-base) 90%);
+  background-size: 220% 100%; animation: shimmer 1.3s linear infinite;
+}
+.sk-avatar { width: 28px; height: 28px; border-radius: 50%; flex: none; }
+.sk-line { height: 12px; }
+@media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
