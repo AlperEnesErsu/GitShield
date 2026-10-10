@@ -1,5 +1,6 @@
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { CommandPalette, PaletteButton } from "./components/CommandPalette";
 import { api } from "./api";
 import { MonitorIcon, MoonIcon, ShieldIcon, SunIcon } from "./components/icons";
 import { useAsync } from "./hooks";
@@ -54,6 +55,7 @@ function Shell() {
             <NavLink to="/achievements">Başarılar</NavLink>
           </nav>
           <div className="topbar-meta">
+            <PaletteButton />
             <ProgressChip />
             {s && (
               <span className={`pill ${s.llm.provider === "none" ? "pill-warn" : "pill-ok"}`}
@@ -86,6 +88,7 @@ function Shell() {
           <code>GITHUB_TOKEN</code> ekleyin ya da <code>gh auth login</code> çalıştırıp sunucuyu yeniden başlatın.
         </div>
       )}
+      <CommandPalette setTheme={setTheme} />
       <main className="content">
         <ErrorBoundary resetKey={location.pathname}>
           <div className="route-fade" key={location.pathname}>
