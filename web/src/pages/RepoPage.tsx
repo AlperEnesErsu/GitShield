@@ -10,11 +10,14 @@ import {
   Loading,
   ReviewStatusBadge,
   SeverityBadge,
+  Switch,
   VerdictBadge,
 } from "../components/ui";
 import { timeAgo, useAsync } from "../hooks";
 import { RepoOverviewSection } from "../components/RepoOverview";
 import { MiniSteps, PrBoard, stageOf } from "../components/PrBoard";
+import { CiBadge, DependencyPanel, RiskBadge } from "../components/insights";
+import { MemoryPanel } from "../components/MemoryPanel";
 import { ExternalIcon, LockIcon } from "../components/icons";
 
 export function RepoPage() {
@@ -26,6 +29,15 @@ export function RepoPage() {
   const pulls = useAsync(() => api.pulls(fullName), [fullName]);
   const issues = useAsync(() => api.issues(fullName), [fullName]);
   const drafts = useAsync(() => api.draftIssues(fullName), [fullName]);
+  const settings = useAsync(() => api.repoSettings(fullName), [fullName]);
+  const saveSettings = async (patch: { auto_review?: boolean; include_drafts?: boolean }) => {
+    try {
+      const next = await api.setRepoSettings(fullName, patch);
+      settings.setData(() => next);
+    } catch (e) {
+      setActionError((e as Error).message);
+    }
+  };
   const [starting, setStarting] = useState<number | null>(null);
   const [view, setView] = useState<"board" | "table">("board");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -68,6 +80,17 @@ export function RepoPage() {
               <LabelChip key={l.name} label={l} />
             ))}
           </div>
+        </div>
+      ),
+    },
+    {
+      key: "risk",
+      header: "Risk",
+      sortValue: (p) => p.risk?.score ?? null,
+      render: (p) => (
+        <div className="review-cell">
+          <RiskBadge risk={p.risk} />
+          <CiBadge ci={p.ci} compact />
         </div>
       ),
     },
@@ -165,6 +188,18 @@ export function RepoPage() {
 
       {actionError && <ErrorBox error={actionError} />}
 
+      {settings.data && (
+        <div className="settings-row">
+          <Switch checked={settings.data.auto_review} onChange={(v) => saveSettings({ auto_review: v })}
+                  label="Otomatik inceleme"
+                  hint="Yeni PR ya da yeni commit gelince arka planda incelenir; sonuç onayını bekler." />
+          {settings.data.auto_review && (
+            <Switch checked={settings.data.include_drafts} onChange={(v) => saveSettings({ include_drafts: v })}
+                    label="Taslak PR'ları da incele" />
+          )}
+        </div>
+      )}
+
       <div className="section-head">
         <h2>PR süreci {pulls.data && <span className="count">{pulls.data.length} açık</span>}</h2>
         <div className="view-toggle" role="radiogroup" aria-label="Görünüm">
@@ -195,9 +230,16 @@ export function RepoPage() {
         />
       )}
 
+      {pulls.data && (
+        <DependencyPanel key={pulls.data.map((p) => `${p.number}:${p.review?.status ?? ""}`).join(",")}
+                         repo={fullName} pulls={pulls.data} onDone={() => { pulls.reload(); drafts.reload(); }} />
+      )}
+
       <div className="section-head"><h2>Repo özeti</h2></div>
       <RepoOverviewSection overview={overview.data} error={overview.error} pulls={pulls.data}
                            onRetry={overview.reload} />
+
+      <MemoryPanel repo={fullName} />
 
       <DraftIssuesSection
         drafts={drafts.data}

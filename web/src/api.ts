@@ -44,6 +44,38 @@ export interface RepoOverview {
   gitshield: { reviews: number; submitted: number; draft_issues: number };
 }
 
+export type CiState = "success" | "failure" | "pending" | "none";
+
+export interface Risk {
+  score: number;
+  level: "low" | "medium" | "high";
+  factors: { label: string; points: number }[];
+}
+
+export interface Dependency {
+  package: string;
+  from: string | null;
+  to: string | null;
+  change: "major" | "minor" | "patch" | "unknown";
+  group: boolean;
+  bot: boolean;
+}
+
+/** Risk, CI and dependency info the backend attaches to every open PR. */
+export interface PrInsights {
+  risk: Risk | null;
+  ci: CiState;
+  dependency: Dependency | null;
+}
+
+export interface BatchResult {
+  number: number;
+  status: "approved" | "skipped" | "failed";
+  reason?: string;
+  url?: string;
+  review_id?: number;
+}
+
 export interface Repo {
   full_name: string;
   owner: string;
@@ -69,7 +101,7 @@ export interface Repo {
   last_review_at: string | null;
 }
 
-export interface PullSummary {
+export interface PullSummary extends PrInsights {
   number: number;
   title: string;
   url: string;
@@ -135,7 +167,7 @@ export interface ProgressStep {
 export interface ReviewComment {
   id: number;
   review_id: number;
-  source: "scanner" | "llm";
+  source: "scanner" | "llm" | "carried";
   path: string;
   line: number | null;
   in_diff: boolean;
@@ -148,6 +180,35 @@ export interface ReviewComment {
   verification: Verification;
   verification_note: string;
   included: boolean;
+  fix_pr_url?: string | null;
+}
+
+export interface FixPreview {
+  path: string;
+  start_line: number;
+  end_line: number;
+  original: string;
+  replacement: string;
+  explanation: string;
+  diff: string;
+  base_branch: string;
+  head_sha: string;
+  branch: string;
+  can_push: boolean;
+  reason: string | null;
+  changed: boolean;
+}
+
+export interface Followup {
+  id: number;
+  prev_comment_id: number | null;
+  path: string;
+  old_line: number | null;
+  new_line: number | null;
+  severity: Severity;
+  title: string;
+  status: "fixed" | "still_open" | "unclear";
+  note: string;
 }
 
 export interface Review {
@@ -169,10 +230,13 @@ export interface Review {
   created_at: string;
   submitted_at: string | null;
   progress: ProgressStep[];
+  mode: "full" | "incremental";
+  base_sha: string | null;
+  followups: Followup[];
   comments: ReviewComment[];
 }
 
-export interface PullDetail {
+export interface PullDetail extends PrInsights {
   number: number;
   title: string;
   body: string;
@@ -191,6 +255,168 @@ export interface PullDetail {
   reviews: { id: number; status: ReviewStatus; verdict: Verdict; created_at: string; head_sha: string }[];
   latest_review: Review | null;
 }
+
+export type InboxKind = "approve" | "failed" | "outdated" | "new" | "running" | "drafts";
+
+export interface InboxItem extends Partial<PrInsights> {
+  kind: InboxKind;
+  priority: number;
+  repo: string;
+  pr_number?: number;
+  title: string;
+  author?: string;
+  author_avatar?: string;
+  draft?: boolean;
+  created_at?: string;
+  updated_at: string;
+  review_id?: number | null;
+  verdict?: Verdict | null;
+  open_comments?: number;
+  error?: string | null;
+  draft_count?: number;
+  severities?: Severity[];
+}
+
+export interface Inbox {
+  items: InboxItem[];
+  counts: Partial<Record<InboxKind, number>>;
+  actionable: number;
+  errors: { repo: string; error: string }[];
+  repos_checked: number;
+}
+
+export interface RepoSettings {
+  repo: string;
+  auto_review: boolean;
+  include_drafts: boolean;
+}
+
+export interface Automation {
+  enabled: boolean;
+  interval_sec: number;
+  busy: boolean;
+  current: string | null;
+  last_run_at: string | null;
+  next_run_in_sec: number | null;
+  last_error: string | null;
+  started_reviews: number;
+  repos: string[];
+}
+
+export interface MemoryItem {
+  id: number;
+  repo: string;
+  kind: "suppress" | "rule";
+  text: string;
+  rule_id: string | null;
+  path: string | null;
+  source_comment_id: number | null;
+  active: boolean;
+  hits: number;
+  created_at: string;
+}
+
+export interface StalePull {
+  repo: string;
+  number: number;
+  title: string;
+  author: string;
+  age_days: number;
+  updated_at: string;
+}
+
+export interface Metrics {
+  days: number;
+  sla_days: number;
+  repos_checked: number;
+  errors: { repo: string; error: string }[];
+  merge: {
+    count: number;
+    median_hours: number | null;
+    p75_hours: number | null;
+    by_repo: { repo: string; count: number; median_hours: number | null }[];
+    weekly: { week: string; merged: number; median_hours: number | null }[];
+  };
+  open: {
+    count: number;
+    median_age_days: number | null;
+    over_sla: StalePull[];
+    buckets: { label: string; count: number }[];
+  };
+  gitshield: {
+    reviews: number;
+    submitted: number;
+    failed: number;
+    awaiting: number;
+    median_ai_seconds: number | null;
+    median_approval_minutes: number | null;
+    weekly: { week: string; reviews: number }[];
+  };
+}
+
+export type CiBlame = "pr" | "environment" | "base" | "flaky" | "unknown";
+
+export interface CiJob {
+  name: string;
+  id: number;
+  url: string | null;
+  conclusion: string;
+  is_actions: boolean;
+  pattern?: string | null;
+  blame: CiBlame;
+  blame_label: string;
+  title: string;
+  explanation: string;
+  suggestion: string;
+  evidence?: string;
+  excerpt?: string;
+  base?: { conclusion: string | null; run_url?: string; at?: string; event?: string; error?: string };
+  audit?: { packages: string[]; touched_by_pr: string[] };
+}
+
+export interface CiDiagnosis {
+  head_sha: string;
+  base: string;
+  actor: string;
+  total_checks: number;
+  failed: number;
+  passing: number;
+  pending: number;
+  jobs: CiJob[];
+  verdict: { blame: CiBlame | "none"; text: string };
+  ai: { summary: string; cause: string; blame: CiBlame; fix_steps: string[]; confidence: string } | null;
+  cached_at?: string;
+}
+
+export interface Badge {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  tier: "bronze" | "silver" | "gold";
+  target: number;
+  value: number;
+  earned: boolean;
+  earned_at: string | null;
+  new: boolean;
+}
+
+export interface Gamification {
+  level: number;
+  title: string;
+  xp: number;
+  level_floor: number;
+  next_level_xp: number;
+  progress: number;
+  streak: { current: number; best: number; today: number; goal: number; at_risk: boolean };
+  heatmap: { date: string; count: number }[];
+  stats: Record<string, number>;
+  badges: Badge[];
+  new_badges: Badge[];
+}
+
+/** Fired after every successful write so progress widgets (streak, badges) can refresh. */
+export const ACTIVITY_EVENT = "gitshield:activity";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -214,12 +440,47 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
     throw new ApiError(resp.status, message);
   }
+  if (method !== "GET") window.dispatchEvent(new Event(ACTIVITY_EVENT));
+  if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
 }
 
 const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
+  inbox: () => request<Inbox>("GET", "/inbox"),
+  gamification: () => request<Gamification>("GET", "/gamification"),
+  markBadgesSeen: () => request<void>("POST", "/gamification/seen"),
+  setDailyGoal: (goal: number) => request<Gamification>("PUT", "/gamification/goal", { goal }),
+  ciDiagnosis: (repo: string, n: number, opts: { refresh?: boolean; ai?: boolean } = {}) =>
+    request<CiDiagnosis>("GET", `${repoPath(repo)}/pulls/${n}/ci-diagnosis?refresh=${!!opts.refresh}&ai=${!!opts.ai}`),
+  rerunJob: (repo: string, jobId: number) =>
+    request<{ rerun: number }>("POST", `${repoPath(repo)}/actions/jobs/${jobId}/rerun`),
+  metrics: (days: number, slaDays: number) => request<Metrics>("GET", `/metrics?days=${days}&sla_days=${slaDays}`),
+  notifications: () => request<{ channels: string[]; app_url: string }>("GET", "/notifications"),
+  testNotification: () => request<{ results: Record<string, string> }>("POST", "/notifications/test"),
+  fixPreview: (commentId: number) => request<FixPreview>("POST", `/comments/${commentId}/fix/preview`),
+  createFix: (commentId: number, start: number, end: number, replacement: string) =>
+    request<{ url: string; number: number; branch: string }>("POST", `/comments/${commentId}/fix`,
+      { start_line: start, end_line: end, replacement }),
+  memory: (repo: string) => request<MemoryItem[]>("GET", `${repoPath(repo)}/memory`),
+  addRule: (repo: string, text: string) => request<MemoryItem>("POST", `${repoPath(repo)}/memory`, { text }),
+  patchMemory: (id: number, patch: Partial<Pick<MemoryItem, "text" | "active">>) =>
+    request<MemoryItem>("PATCH", `/memory/${id}`, patch),
+  deleteMemory: (id: number) =>
+    fetch(`/api/memory/${id}`, { method: "DELETE" }).then((r) => {
+      if (!r.ok) throw new ApiError(r.status, r.statusText);
+    }),
+  suppressComment: (id: number, scope: "file" | "repo") =>
+    request<{ memory: MemoryItem; comment: ReviewComment }>("POST", `/comments/${id}/suppress`, { scope }),
+  dependencyBatch: (repo: string, numbers: number[], allowMajor = false) =>
+    request<{ results: BatchResult[] }>("POST", `${repoPath(repo)}/dependency-batch`,
+      { numbers, allow_major: allowMajor }),
+  automation: () => request<Automation>("GET", "/automation"),
+  runAutomation: () => request<Automation>("POST", "/automation/run"),
+  repoSettings: (repo: string) => request<RepoSettings>("GET", `${repoPath(repo)}/settings`),
+  setRepoSettings: (repo: string, patch: Partial<Omit<RepoSettings, "repo">>) =>
+    request<RepoSettings>("PUT", `${repoPath(repo)}/settings`, patch),
   status: () => request<Status>("GET", "/status"),
   repos: (refresh = false) =>
     request<{ login: string; repos: Repo[] }>("GET", `/repos${refresh ? "?refresh=true" : ""}`),
@@ -228,8 +489,8 @@ export const api = {
   issues: (repo: string) => request<Issue[]>("GET", `${repoPath(repo)}/issues`),
   draftIssues: (repo: string) => request<DraftIssue[]>("GET", `${repoPath(repo)}/draft-issues?all=true`),
   pull: (repo: string, n: number) => request<PullDetail>("GET", `${repoPath(repo)}/pulls/${n}`),
-  startReview: (repo: string, n: number) =>
-    request<{ id: number; status: ReviewStatus }>("POST", `${repoPath(repo)}/pulls/${n}/reviews`),
+  startReview: (repo: string, n: number, full = false) =>
+    request<{ id: number; status: ReviewStatus }>("POST", `${repoPath(repo)}/pulls/${n}/reviews${full ? "?full=true" : ""}`),
   review: (id: number) => request<Review>("GET", `/reviews/${id}`),
   patchReview: (id: number, patch: Partial<Pick<Review, "summary" | "verdict">>) =>
     request<Review>("PATCH", `/reviews/${id}`, patch),

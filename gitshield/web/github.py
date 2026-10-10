@@ -1,3 +1,4 @@
+import base64
 import time
 from typing import Any, Dict, List, Optional
 
@@ -82,6 +83,36 @@ query($owner: String!, $name: String!) {
 MAX_REPO_PAGES = 10
 MAX_PR_FILES = 300
 REPO_CACHE_TTL_SEC = 60
+
+OPEN_PULLS_DETAIL_QUERY = """
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        additions
+        deletions
+        changedFiles
+        authorAssociation
+        author { login }
+        files(first: 100) { nodes { path additions deletions } }
+        commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
+      }
+    }
+  }
+}
+"""
+
+MERGED_PULLS_QUERY = """
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: MERGED, first: 40, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title createdAt mergedAt author { login } }
+    }
+  }
+}
+"""
 
 
 class GitHubError(Exception):
@@ -176,6 +207,16 @@ class GitHubClient:
             raise GitHubError(404, f"{owner}/{repo} not found")
         return data["repository"]
 
+    async def open_pulls_detail(self, owner: str, repo: str) -> Dict[int, Dict[str, Any]]:
+        """Size, files, author association and CI rollup for every open PR, keyed by number."""
+        data = await self._graphql(OPEN_PULLS_DETAIL_QUERY, {"owner": owner, "name": repo})
+        nodes = ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
+        return {n["number"]: n for n in nodes}
+
+    async def merged_pulls(self, owner: str, repo: str) -> List[Dict[str, Any]]:
+        data = await self._graphql(MERGED_PULLS_QUERY, {"owner": owner, "name": repo})
+        return ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
+
     async def participation(self, owner: str, repo: str) -> Optional[Dict[str, List[int]]]:
         """Weekly commit counts for the last 52 weeks; None while GitHub is still computing them."""
         resp = await self._request("GET", f"/repos/{owner}/{repo}/stats/participation")
@@ -199,6 +240,11 @@ class GitHubClient:
             f"/repos/{owner}/{repo}/pulls/{number}/files", {}, max_pages=MAX_PR_FILES // 100
         )
 
+    async def compare(self, owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
+        """Commits and per-file patches between two commits (used for incremental reviews)."""
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/compare/{base}...{head}")
+        return resp.json()
+
     async def create_review(
         self,
         owner: str,
@@ -214,6 +260,72 @@ class GitHubClient:
             f"/repos/{owner}/{repo}/pulls/{number}/reviews",
             json={"commit_id": commit_id, "body": body, "event": event, "comments": comments},
         )
+        return resp.json()
+
+    # ---- Checks & Actions (CI diagnosis) -------------------------------------------------
+
+    async def check_runs(self, owner: str, repo: str, sha: str) -> List[Dict[str, Any]]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/commits/{sha}/check-runs",
+                                   params={"per_page": 100})
+        return resp.json().get("check_runs", [])
+
+    async def actions_job(self, owner: str, repo: str, job_id: int) -> Dict[str, Any]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/jobs/{job_id}")
+        return resp.json()
+
+    async def actions_run(self, owner: str, repo: str, run_id: int) -> Dict[str, Any]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/runs/{run_id}")
+        return resp.json()
+
+    async def workflow_runs(self, owner: str, repo: str, workflow_id: int, branch: str,
+                            limit: int = 5) -> List[Dict[str, Any]]:
+        resp = await self._request(
+            "GET", f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",
+            params={"branch": branch, "status": "completed", "per_page": limit})
+        return resp.json().get("workflow_runs", [])
+
+    async def run_jobs(self, owner: str, repo: str, run_id: int) -> List[Dict[str, Any]]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
+                                   params={"per_page": 100})
+        return resp.json().get("jobs", [])
+
+    async def job_logs(self, owner: str, repo: str, job_id: int) -> str:
+        """Plain-text log of an Actions job. GitHub answers with a redirect to blob storage;
+        httpx drops the Authorization header when the redirect leaves api.github.com."""
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
+                                   follow_redirects=True)
+        return resp.text
+
+    async def rerun_job(self, owner: str, repo: str, job_id: int) -> None:
+        await self._request("POST", f"/repos/{owner}/{repo}/actions/jobs/{job_id}/rerun")
+
+    # ---- Contents, branches & PR creation (fix PRs) ----------------------------------
+
+    async def get_file(self, owner: str, repo: str, path: str, ref: str) -> Dict[str, Any]:
+        """File metadata + decoded text at ``ref``."""
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/contents/{path}", params={"ref": ref})
+        data = resp.json()
+        if isinstance(data, list) or data.get("type") != "file":
+            raise GitHubError(422, f"{path} bir dosya değil")
+        data["text"] = base64.b64decode(data.get("content", "")).decode("utf-8")
+        return data
+
+    async def create_branch(self, owner: str, repo: str, branch: str, sha: str) -> None:
+        await self._request("POST", f"/repos/{owner}/{repo}/git/refs",
+                            json={"ref": f"refs/heads/{branch}", "sha": sha})
+
+    async def update_file(self, owner: str, repo: str, path: str, branch: str, text: str,
+                          blob_sha: str, message: str) -> Dict[str, Any]:
+        resp = await self._request("PUT", f"/repos/{owner}/{repo}/contents/{path}", json={
+            "message": message, "branch": branch, "sha": blob_sha,
+            "content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+        })
+        return resp.json()
+
+    async def create_pull(self, owner: str, repo: str, title: str, head: str, base: str,
+                          body: str) -> Dict[str, Any]:
+        resp = await self._request("POST", f"/repos/{owner}/{repo}/pulls",
+                                   json={"title": title, "head": head, "base": base, "body": body})
         return resp.json()
 
     # ---- Issues ----------------------------------------------------------------

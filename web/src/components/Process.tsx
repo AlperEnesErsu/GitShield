@@ -61,9 +61,27 @@ const STATUS_LABEL: Record<StepStatus, string> = {
   failed: "hata",
 };
 
-/** Six-step horizontal pipeline; falls back to an all-pending template when there is no review yet. */
-export function ProcessStepper({ steps }: { steps?: ProgressStep[] }) {
-  const list = steps && steps.length ? steps : DEFAULT_STEPS;
+/** Reviews created before step tracking existed have no progress; reconstruct it from their status. */
+function stepsFor(review: Review | null | undefined): ProgressStep[] {
+  if (!review) return DEFAULT_STEPS;
+  if (review.progress?.length) return review.progress;
+  const llm = review.provider !== "none";
+  const after = review.status === "ready" || review.status === "submitted";
+  const status: Record<ProgressStep["key"], StepStatus> = {
+    fetch: after ? "done" : "pending",
+    scan: after ? "done" : "pending",
+    ai_review: after ? (llm ? "done" : "skipped") : "pending",
+    verify: after ? (llm ? "done" : "skipped") : "pending",
+    approve: review.status === "submitted" ? "done" : review.status === "ready" ? "running" : "pending",
+    submit: review.status === "submitted" ? "done" : "pending",
+  };
+  if (review.status === "failed") status.fetch = "failed";
+  return DEFAULT_STEPS.map((s) => ({ ...s, status: status[s.key] }));
+}
+
+/** Six-step horizontal pipeline for a review; an all-pending template when there is no review yet. */
+export function ProcessStepper({ review }: { review?: Review | null }) {
+  const list = stepsFor(review);
   const done = list.filter((s) => s.status === "done" || s.status === "skipped").length;
 
   return (

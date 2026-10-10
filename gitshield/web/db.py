@@ -66,18 +66,80 @@ CREATE TABLE IF NOT EXISTS draft_issues (
     updated_at TEXT NOT NULL,
     UNIQUE(repo, fingerprint)
 );
+
+CREATE TABLE IF NOT EXISTS followups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+    prev_comment_id INTEGER REFERENCES review_comments(id) ON DELETE SET NULL,
+    path TEXT NOT NULL,
+    old_line INTEGER,
+    new_line INTEGER,
+    severity TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,            -- fixed | still_open | unclear
+    note TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo TEXT NOT NULL,
+    kind TEXT NOT NULL,              -- suppress (do not raise again) | rule (instruction for the reviewer)
+    text TEXT NOT NULL,
+    rule_id TEXT,                    -- scanner rule a suppression applies to
+    path TEXT,                       -- NULL = whole repository
+    source_comment_id INTEGER REFERENCES review_comments(id) ON DELETE SET NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    hits INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_repo ON memory(repo);
+
+CREATE TABLE IF NOT EXISTS ci_diagnoses (
+    repo TEXT NOT NULL,
+    pr_number INTEGER NOT NULL,
+    head_sha TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (repo, pr_number, head_sha)
+);
+
+CREATE TABLE IF NOT EXISTS achievements (
+    id TEXT PRIMARY KEY,             -- badge id, or a marker such as inbox-zero
+    earned_at TEXT NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS repo_settings (
+    repo TEXT PRIMARY KEY,
+    auto_review INTEGER NOT NULL DEFAULT 0,
+    include_drafts INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
+
+DEFAULT_REPO_SETTINGS = {"auto_review": False, "include_drafts": False}
 
 REVIEW_COLUMNS = {"status", "error", "summary", "verdict", "recommended_verdict", "verifier_notes",
                   "provider", "model", "skipped_files", "stats", "github_review_url", "submitted_at",
-                  "progress"}
-COMMENT_COLUMNS = {"body", "title", "included", "verification", "verification_note"}
+                  "progress", "mode", "base_sha", "origin"}
+COMMENT_COLUMNS = {"body", "title", "included", "verification", "verification_note", "fix_pr_url"}
 ISSUE_COLUMNS = {"title", "body", "status", "github_issue_number", "github_issue_url"}
 JSON_COLUMNS = {"skipped_files", "stats", "progress"}
 
 # Columns added after the first release; created on startup for older databases.
 MIGRATIONS = {
-    "reviews": {"progress": "TEXT NOT NULL DEFAULT '[]'"},
+    "reviews": {
+        "progress": "TEXT NOT NULL DEFAULT '[]'",
+        "mode": "TEXT NOT NULL DEFAULT 'full'",
+        "base_sha": "TEXT",
+        "origin": "TEXT NOT NULL DEFAULT 'manual'",
+    },
+    "review_comments": {"fix_pr_url": "TEXT"},
 }
 
 
@@ -161,6 +223,7 @@ class Database:
             return None
         review = _review_row(row)
         review["comments"] = self.list_comments(review_id)
+        review["followups"] = self.list_followups(review_id)
         return review
 
     def latest_reviews(self, repo: str) -> Dict[int, Dict[str, Any]]:
@@ -168,7 +231,11 @@ class Database:
         rows = self._exec(
             "SELECT r.*, "
             " (SELECT COUNT(*) FROM review_comments c WHERE c.review_id = r.id"
-            "   AND c.verification != 'rejected') AS open_comments"
+            "   AND c.verification != 'rejected') AS open_comments,"
+            " (SELECT COUNT(*) FROM review_comments c WHERE c.review_id = r.id"
+            "   AND c.verification != 'rejected' AND c.severity = 'CRITICAL') AS critical_findings,"
+            " (SELECT COUNT(*) FROM review_comments c WHERE c.review_id = r.id"
+            "   AND c.verification != 'rejected' AND c.severity = 'HIGH') AS high_findings"
             " FROM reviews r WHERE r.repo = ? AND r.id IN"
             " (SELECT MAX(id) FROM reviews WHERE repo = ? GROUP BY pr_number)",
             (repo, repo),
@@ -244,3 +311,128 @@ class Database:
 
     def update_draft_issue(self, issue_id: int, **fields: Any) -> None:
         self._update("draft_issues", issue_id, ISSUE_COLUMNS, fields)
+
+    def list_pending_drafts(self) -> List[Dict[str, Any]]:
+        rows = self._exec(
+            "SELECT * FROM draft_issues WHERE status = 'draft' ORDER BY id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---- Repo settings ---------------------------------------------------------
+
+    def get_repo_settings(self, repo: str) -> Dict[str, Any]:
+        row = self._exec("SELECT * FROM repo_settings WHERE repo = ?", (repo,)).fetchone()
+        if not row:
+            return {"repo": repo, **DEFAULT_REPO_SETTINGS}
+        return {"repo": repo, "auto_review": bool(row["auto_review"]),
+                "include_drafts": bool(row["include_drafts"])}
+
+    def set_repo_settings(self, repo: str, **fields: Any) -> Dict[str, Any]:
+        merged = {**self.get_repo_settings(repo), **{k: v for k, v in fields.items()
+                                                       if k in DEFAULT_REPO_SETTINGS and v is not None}}
+        self._exec(
+            "INSERT INTO repo_settings (repo, auto_review, include_drafts, updated_at) VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(repo) DO UPDATE SET auto_review = excluded.auto_review,"
+            " include_drafts = excluded.include_drafts, updated_at = excluded.updated_at",
+            (repo, int(merged["auto_review"]), int(merged["include_drafts"]), now()),
+        )
+        return self.get_repo_settings(repo)
+
+    def auto_review_repos(self) -> List[Dict[str, Any]]:
+        rows = self._exec("SELECT repo FROM repo_settings WHERE auto_review = 1 ORDER BY repo").fetchall()
+        return [self.get_repo_settings(r["repo"]) for r in rows]
+
+    # ---- Follow-ups (did the previous review's comments get fixed?) -------------
+
+    def add_followup(self, review_id: int, **fields: Any) -> None:
+        cols = ["review_id"] + list(fields)
+        self._exec(
+            f"INSERT INTO followups ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+            [review_id] + list(fields.values()),
+        )
+
+    def list_followups(self, review_id: int) -> List[Dict[str, Any]]:
+        rows = self._exec("SELECT * FROM followups WHERE review_id = ? ORDER BY id", (review_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---- Repo memory ---------------------------------------------------------------
+
+    def add_memory(self, repo: str, kind: str, text: str, rule_id: Optional[str] = None,
+                   path: Optional[str] = None, source_comment_id: Optional[int] = None) -> Dict[str, Any]:
+        cur = self._exec(
+            "INSERT INTO memory (repo, kind, text, rule_id, path, source_comment_id, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (repo, kind, text, rule_id, path, source_comment_id, now()),
+        )
+        return self.get_memory(int(cur.lastrowid))
+
+    def get_memory(self, memory_id: int) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT * FROM memory WHERE id = ?", (memory_id,)).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        data["active"] = bool(data["active"])
+        return data
+
+    def list_memory(self, repo: str, active_only: bool = False) -> List[Dict[str, Any]]:
+        sql = "SELECT id FROM memory WHERE repo = ?" + (" AND active = 1" if active_only else "")
+        return [self.get_memory(r["id"]) for r in self._exec(sql + " ORDER BY id DESC", (repo,)).fetchall()]
+
+    def update_memory(self, memory_id: int, **fields: Any) -> None:
+        fields = {k: v for k, v in fields.items() if k in ("text", "active") and v is not None}
+        if fields:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            self._exec(f"UPDATE memory SET {sets} WHERE id = ?",
+                       [_encode(k, v) for k, v in fields.items()] + [memory_id])
+
+    def delete_memory(self, memory_id: int) -> None:
+        self._exec("DELETE FROM memory WHERE id = ?", (memory_id,))
+
+    def bump_memory_hits(self, memory_ids: Iterable[int]) -> None:
+        for mid in set(memory_ids):
+            self._exec("UPDATE memory SET hits = hits + 1 WHERE id = ?", (mid,))
+
+    def reviews_since(self, since_iso: str) -> List[Dict[str, Any]]:
+        rows = self._exec("SELECT * FROM reviews WHERE created_at >= ? ORDER BY created_at",
+                          (since_iso,)).fetchall()
+        return [_review_row(r) for r in rows]
+
+    # ---- CI diagnoses (cached per head commit) ----------------------------------------
+
+    def get_ci_diagnosis(self, repo: str, pr_number: int, head_sha: str) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT result, created_at FROM ci_diagnoses WHERE repo = ? AND pr_number = ?"
+                         " AND head_sha = ?", (repo, pr_number, head_sha)).fetchone()
+        if not row:
+            return None
+        return {**json.loads(row["result"]), "cached_at": row["created_at"]}
+
+    def save_ci_diagnosis(self, repo: str, pr_number: int, head_sha: str, result: Dict[str, Any]) -> None:
+        self._exec("INSERT OR REPLACE INTO ci_diagnoses (repo, pr_number, head_sha, result, created_at)"
+                   " VALUES (?, ?, ?, ?, ?)", (repo, pr_number, head_sha, json.dumps(result), now()))
+
+    # ---- Gamification ------------------------------------------------------------------
+
+    def query(self, sql: str, params: Iterable[Any] = ()) -> List[Dict[str, Any]]:
+        """Read-only helper for aggregate queries (gamification, metrics)."""
+        return [dict(r) for r in self._exec(sql, params).fetchall()]
+
+    def achievements(self) -> Dict[str, Dict[str, Any]]:
+        return {r["id"]: {"earned_at": r["earned_at"], "seen": bool(r["seen"])}
+                for r in self._exec("SELECT * FROM achievements").fetchall()}
+
+    def grant_achievement(self, achievement_id: str, earned_at: Optional[str] = None) -> bool:
+        """Record an achievement once; returns True when it is new."""
+        cur = self._exec("INSERT OR IGNORE INTO achievements (id, earned_at) VALUES (?, ?)",
+                         (achievement_id, earned_at or now()))
+        return bool(cur.rowcount)
+
+    def mark_achievements_seen(self) -> None:
+        self._exec("UPDATE achievements SET seen = 1 WHERE seen = 0")
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        row = self._exec("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self._exec("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE"
+                   " SET value = excluded.value", (key, value))

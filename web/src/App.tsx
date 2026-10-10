@@ -2,6 +2,8 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 import { api } from "./api";
 import { MonitorIcon, MoonIcon, ShieldIcon, SunIcon } from "./components/icons";
 import { useAsync } from "./hooks";
+import { GamificationProvider, ProgressChip } from "./gamification";
+import { InboxProvider, useInbox } from "./inbox";
 import { ThemePref, useTheme } from "./theme";
 
 const THEMES: { value: ThemePref; label: string; icon: JSX.Element }[] = [
@@ -11,6 +13,26 @@ const THEMES: { value: ThemePref; label: string; icon: JSX.Element }[] = [
 ];
 
 export function App() {
+  return (
+    <InboxProvider>
+      <GamificationProvider>
+        <Shell />
+      </GamificationProvider>
+    </InboxProvider>
+  );
+}
+
+function InboxLink() {
+  const inbox = useInbox();
+  const n = inbox.data?.actionable ?? 0;
+  return (
+    <NavLink to="/inbox">
+      Bekleyenler {n > 0 && <span className="nav-badge">{n}</span>}
+    </NavLink>
+  );
+}
+
+function Shell() {
   const status = useAsync(() => api.status(), []);
   const [theme, setTheme] = useTheme();
   const s = status.data;
@@ -25,8 +47,12 @@ export function App() {
           </Link>
           <nav className="topnav">
             <NavLink to="/" end>Genel bakış</NavLink>
+            <InboxLink />
+            <NavLink to="/metrics">Metrikler</NavLink>
+            <NavLink to="/achievements">Başarılar</NavLink>
           </nav>
           <div className="topbar-meta">
+            <ProgressChip />
             {s && (
               <span className={`pill ${s.llm.provider === "none" ? "pill-warn" : "pill-ok"}`}
                     title="LLM_PROVIDER / LLM_MODEL ile değiştirilebilir">
