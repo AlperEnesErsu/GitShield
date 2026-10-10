@@ -321,7 +321,7 @@ function ReviewEditor({ review, pr, setReview, setComment, onSubmitted }: {
 
       {error && <ErrorBox error={error} />}
 
-      <div className="submit-bar">
+      <div className={`submit-bar ${review.status === "submitted" ? "is-done" : ""}`}>
         {review.status === "submitted" ? (
           <>
             <span>✓ GitHub'a gönderildi · {timeAgo(review.submitted_at)}</span>

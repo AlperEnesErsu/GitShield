@@ -692,8 +692,11 @@ async def submit_review(db: Database, gh: GitHubClient, review: Dict[str, Any],
             raise
 
     progress = Progress(db, review["id"], review.get("progress"))
-    progress.done("approve", f"{len(included)} / {len(review['comments'])} yorum onaylandı")
-    progress.done("submit", f"{len(inline)} satır içi · {len(general)} özette · karar {event}")
+    verdict_tr = {"APPROVE": "Onay", "REQUEST_CHANGES": "Değişiklik iste", "COMMENT": "Yorum"}.get(event, event)
+    progress.done("approve", f"{len(included)} / {len(review['comments'])} yorum onaylandı"
+                  if review["comments"] else "Yorumsuz onaylandı")
+    progress.done("submit", f"Karar: {verdict_tr}" + (f" · {len(inline)} satır içi · {len(general)} özette"
+                                                      if included else ""))
     db.update_review(review["id"], status="submitted", submitted_at=now(),
                      github_review_url=result.get("html_url"))
     return result

@@ -1257,3 +1257,6 @@ kbd {
 .sk-avatar { width: 28px; height: 28px; border-radius: 50%; flex: none; }
 .sk-line { height: 12px; }
 @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+
+/* A submitted review has nothing left to act on: the bar no longer floats over the content. */
+.submit-bar.is-done { position: static; box-shadow: var(--shadow); background: var(--success-bg); border-color: transparent; }
