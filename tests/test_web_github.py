@@ -33,3 +33,28 @@ def test_client_raises_readable_429():
     with pytest.raises(GitHubError) as err:
         asyncio.run(gh.viewer())
     assert err.value.status_code == 429 and "limiti doldu" in err.value.message
+
+
+def test_repeated_reads_are_cached_and_writes_invalidate():
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path))
+        if request.method == "POST":
+            return httpx.Response(200, json={"html_url": "https://x"})
+        return httpx.Response(200, json=[{"number": 1}])
+
+    gh = GitHubClient(token="t", base_url="https://api.github.test")
+    gh._client = httpx.AsyncClient(base_url="https://api.github.test", transport=httpx.MockTransport(handler))
+
+    async def scenario():
+        await gh.list_pulls("acme", "app")
+        await gh.list_pulls("acme", "app")  # served from cache
+        await gh.list_pulls("acme", "other")  # different repo: fetched
+        await gh.create_review("acme", "app", 1, "sha", "body", "COMMENT", [])
+        await gh.list_pulls("acme", "app")  # invalidated by the write: fetched again
+
+    asyncio.run(scenario())
+    gets = [c for c in calls if c[0] == "GET"]
+    assert gets == [("GET", "/repos/acme/app/pulls"), ("GET", "/repos/acme/other/pulls"),
+                    ("GET", "/repos/acme/app/pulls")]
