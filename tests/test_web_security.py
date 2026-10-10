@@ -47,3 +47,21 @@ def test_foreign_origin_is_refused_even_with_header(client):
 
 def test_reads_do_not_need_the_header(client):
     assert client.get("/api/gamification").status_code == 200
+
+
+def test_setup_page_when_frontend_is_not_built(tmp_path, monkeypatch):
+    import importlib
+
+    from gitshield.web import app as app_module
+
+    monkeypatch.setattr("pathlib.Path.exists", lambda self: False if self.name == "dist" else True)
+    reloaded = importlib.reload(app_module)
+    try:
+        monkeypatch.setattr(reloaded.settings, "db_path", tmp_path / "x.db")
+        monkeypatch.setattr(reloaded.settings, "auto_review_interval", 0)
+        with TestClient(reloaded.app, base_url="http://127.0.0.1") as c:
+            res = c.get("/")
+            assert res.status_code == 503 and "npm run build" in res.text
+    finally:
+        monkeypatch.undo()
+        importlib.reload(app_module)

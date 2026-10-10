@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -643,3 +643,20 @@ if FRONTEND_DIST.exists():
             return FileResponse(candidate)
         # index.html references hashed assets; never cache it so new builds load immediately.
         return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})
+else:
+    SETUP_PAGE = """<!doctype html><html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>GitShield · kurulum</title>
+<style>body{font:15px/1.6 system-ui,sans-serif;max-width:620px;margin:12vh auto;padding:0 20px;color:#17171c;background:#f6f6f3}
+code,pre{font-family:ui-monospace,Consolas,monospace;background:#fff;border:1px solid #e8e7e2;border-radius:8px}
+pre{padding:12px 14px}code{padding:1px 6px}h1{font-size:22px}</style></head><body>
+<h1>🛡️ GitShield arayüzü henüz derlenmemiş</h1>
+<p>API çalışıyor (<a href="/api/status">/api/status</a>) ama <code>web/dist</code> bulunamadı. Arayüzü bir kez derle:</p>
+<pre>cd web
+npm install
+npm run build</pre>
+<p>Ardından <code>gitshield web</code>'i yeniden başlat. Geliştirme için <code>npm run dev</code> ile
+<a href="http://localhost:5173">localhost:5173</a> da kullanılabilir.</p></body></html>"""
+
+    @app.get("/", include_in_schema=False)
+    async def setup_page():
+        return HTMLResponse(SETUP_PAGE, status_code=503)
