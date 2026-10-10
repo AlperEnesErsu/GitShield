@@ -427,7 +427,11 @@ export class ApiError extends Error {
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const resp = await fetch(`/api${path}`, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    headers: {
+      // Required by the server for writes: blocks cross-site (CSRF) requests to the local API.
+      "X-GitShield-Client": "web",
+      ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!resp.ok) {
@@ -468,7 +472,7 @@ export const api = {
   patchMemory: (id: number, patch: Partial<Pick<MemoryItem, "text" | "active">>) =>
     request<MemoryItem>("PATCH", `/memory/${id}`, patch),
   deleteMemory: (id: number) =>
-    fetch(`/api/memory/${id}`, { method: "DELETE" }).then((r) => {
+    fetch(`/api/memory/${id}`, { method: "DELETE", headers: { "X-GitShield-Client": "web" } }).then((r) => {
       if (!r.ok) throw new ApiError(r.status, r.statusText);
     }),
   suppressComment: (id: number, scope: "file" | "repo") =>

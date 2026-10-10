@@ -83,7 +83,7 @@ def test_goal_and_inbox_zero_via_api(tmp_path, monkeypatch):
 
     monkeypatch.setattr(settings, "db_path", tmp_path / "api.db")
     monkeypatch.setattr(settings, "auto_review_interval", 0)
-    with TestClient(app_module.app) as client:
+    with TestClient(app_module.app, base_url="http://127.0.0.1", headers={"X-GitShield-Client": "test"}) as client:
         assert client.put("/api/gamification/goal", json={"goal": 5}).json()["streak"]["goal"] == 5
         assert client.put("/api/gamification/goal", json={"goal": 0}).status_code == 422
         app_module.app.state.db.grant_achievement("marker:inbox-zero")

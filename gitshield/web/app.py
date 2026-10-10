@@ -20,6 +20,7 @@ from gitshield.web.fixes import FixError, create_fix_pr, preview_fix
 from gitshield.web.insights import pr_insights
 from gitshield.web.metrics import build_metrics
 from gitshield.web.notify import app_url, channels as notify_channels, send as send_notification
+from gitshield.web.security import LocalOnlyMiddleware
 from gitshield.web.review import begin_review, comment_to_issue, run_review, submit_review
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="GitShield", version=__version__, lifespan=lifespan)
+app.add_middleware(LocalOnlyMiddleware)
 
 
 @app.exception_handler(GitHubError)

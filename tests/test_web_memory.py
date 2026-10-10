@@ -68,7 +68,7 @@ def test_memory_api_roundtrip(tmp_path, monkeypatch):
 
     monkeypatch.setattr(settings, "db_path", tmp_path / "api.db")
     monkeypatch.setattr(settings, "auto_review_interval", 0)
-    with TestClient(app_module.app) as client:
+    with TestClient(app_module.app, base_url="http://127.0.0.1", headers={"X-GitShield-Client": "test"}) as client:
         store = app_module.app.state.db
         rid = store.create_review("acme/app", 7, "t", "abc", "none", "")
         cid = store.add_comment(rid, source="llm", path="a.py", line=3, in_diff=True, severity="LOW",
