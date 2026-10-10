@@ -11,6 +11,20 @@ from gitshield.web.db import Database
 from tests.test_web_review import FILES, PR
 
 
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
+
+
 def make_pull(number, sha, draft=False):
     p = copy.deepcopy(PR)
     p.update({
@@ -56,8 +70,8 @@ def test_classify_states():
     assert classify(p, {"status": "submitted", "head_sha": "new-sha"}) == "done"
 
 
-def test_inbox_orders_by_urgency(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_inbox_orders_by_urgency(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     pulls = [make_pull(1, "a"), make_pull(2, "b"), make_pull(3, "c")]
     ready = db.create_review("acme/app", 2, "PR 2", "b", "none", "")
     db.update_review(ready, status="ready")
@@ -72,9 +86,9 @@ def test_inbox_orders_by_urgency(tmp_path):
     assert inbox["actionable"] == 3 and inbox["repos_checked"] == 1
 
 
-def test_auto_reviewer_reviews_each_head_once(tmp_path, monkeypatch):
-    monkeypatch.setattr(automation, "get_provider", lambda: None)
-    db = Database(tmp_path / "t.db")
+def test_auto_reviewer_reviews_each_head_once(tmp_path, monkeypatch, open_db):
+    monkeypatch.setattr(automation, "get_provider", lambda db: None)
+    db = open_db(tmp_path / "t.db")
     gh = InboxGitHub([make_pull(1, "a"), make_pull(2, "b", draft=True)])
     watcher = AutoReviewer(db, gh, interval_sec=60)
 
@@ -89,3 +103,38 @@ def test_auto_reviewer_reviews_each_head_once(tmp_path, monkeypatch):
     db.set_repo_settings("acme/app", include_drafts=True)
     assert asyncio.run(watcher.tick()) == 2
     assert watcher.last_error is None
+
+def test_auto_review_daily_budget_stops_the_watcher(tmp_path, monkeypatch, open_db):
+    from gitshield.web.config import settings
+
+    monkeypatch.setattr(automation, "get_provider", lambda db: None)
+    monkeypatch.setattr(settings, "max_auto_reviews_per_day", 1)
+    db = open_db(tmp_path / "t.db")
+    db.set_repo_settings("acme/app", auto_review=True)
+    gh = InboxGitHub([make_pull(1, "a"), make_pull(2, "b")])
+    watcher = AutoReviewer(db, gh, interval_sec=60)
+
+    assert asyncio.run(watcher.tick()) == 1, "only one automatic review fits the budget"
+    assert set(db.latest_reviews("acme/app")) == {1}
+    status = asyncio.run(_status(watcher))
+    assert status["auto_reviews_remaining"] == 0 and status["max_auto_reviews_per_day"] == 1
+
+    gh.pulls[1]["head"]["sha"] = "b2"  # PR 2 still waits; nothing more starts today
+    assert asyncio.run(watcher.tick()) == 0
+    assert set(db.latest_reviews("acme/app")) == {1}
+
+
+def test_auto_review_budget_zero_is_unlimited(tmp_path, monkeypatch, open_db):
+    from gitshield.web.config import settings
+
+    monkeypatch.setattr(automation, "get_provider", lambda db: None)
+    monkeypatch.setattr(settings, "max_auto_reviews_per_day", 0)
+    db = open_db(tmp_path / "t.db")
+    db.set_repo_settings("acme/app", auto_review=True)
+    watcher = AutoReviewer(db, InboxGitHub([make_pull(1, "a"), make_pull(2, "b")]), interval_sec=60)
+    assert asyncio.run(watcher.tick()) == 2
+    assert asyncio.run(_status(watcher))["auto_reviews_remaining"] is None
+
+
+async def _status(watcher):
+    return watcher.status()

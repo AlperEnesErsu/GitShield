@@ -13,6 +13,20 @@ from tests.test_web_review import PR
 LOCK_PATCH = "@@ -1,2 +1,2 @@\n-  version: 1.0.9\n+  version: 1.0.10\n"
 
 
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
+
+
 def node(number, title, files, ci="SUCCESS", author="dependabot[bot]", assoc="NONE", adds=1, dels=1):
     return {
         "number": number, "title": title, "additions": adds, "deletions": dels,
@@ -83,8 +97,8 @@ class BatchGitHub:
         return {"html_url": f"https://github.com/acme/app/pull/{number}#review"}
 
 
-def test_dependency_batch_enforces_guards(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_dependency_batch_enforces_guards(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     gh = BatchGitHub()
     results = asyncio.run(approve_dependency_batch(db, gh, "acme", "app", [10, 11, 12, 13, 99]))
     by_number = {r["number"]: r for r in results}

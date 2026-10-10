@@ -1,6 +1,7 @@
 import { KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, Repo } from "../api";
+import { useGamification } from "../gamification";
 import { useInbox } from "../inbox";
 import { ThemePref } from "../theme";
 import { SearchIcon } from "./icons";
@@ -26,6 +27,7 @@ function matches(cmd: Command, query: string): boolean {
 export function CommandPalette({ setTheme }: { setTheme: (t: ThemePref) => void }) {
   const navigate = useNavigate();
   const inbox = useInbox();
+  const { enabled: gamificationOn } = useGamification();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -65,8 +67,10 @@ export function CommandPalette({ setTheme }: { setTheme: (t: ThemePref) => void 
         hint: inbox.data ? `${inbox.data.actionable} iş` : undefined, run: go("/inbox") },
       { id: "p-triage", group: "Sayfalar", title: "Hızlı mod", icon: "⌨️", keywords: "triage onay klavye", run: go("/triage") },
       { id: "p-metrics", group: "Sayfalar", title: "Metrikler", icon: "📊", keywords: "süre sla merge", run: go("/metrics") },
-      { id: "p-ach", group: "Sayfalar", title: "Başarılar", icon: "🏅", keywords: "rozet seri xp seviye", run: go("/achievements") },
     ];
+    if (gamificationOn) {
+      pages.push({ id: "p-ach", group: "Sayfalar", title: "Başarılar", icon: "🏅", keywords: "rozet seri xp seviye", run: go("/achievements") });
+    }
     const actions: Command[] = [
       { id: "a-light", group: "Eylemler", title: "Açık temaya geç", icon: "☀️", keywords: "tema light", run: () => setTheme("light") },
       { id: "a-dark", group: "Eylemler", title: "Koyu temaya geç", icon: "🌙", keywords: "tema dark", run: () => setTheme("dark") },
@@ -86,7 +90,7 @@ export function CommandPalette({ setTheme }: { setTheme: (t: ThemePref) => void 
       keywords: r.language?.name, run: go(`/r/${r.full_name}`),
     }));
     return [...pages, ...prs, ...repoCmds, ...actions];
-  }, [inbox, repos, navigate, setTheme]);
+  }, [inbox, repos, navigate, setTheme, gamificationOn]);
 
   const results = useMemo(() => {
     const filtered = query.trim() ? commands.filter((c) => matches(c, query)) : commands;

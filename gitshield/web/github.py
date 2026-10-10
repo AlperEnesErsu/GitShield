@@ -1,6 +1,7 @@
 import base64
 import time
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 
@@ -116,7 +117,7 @@ query($owner: String!, $name: String!) {
 """
 
 
-def rate_limit_message(resp: httpx.Response) -> Optional[str]:
+def rate_limit_message(resp: httpx.Response) -> str | None:
     """A readable message when GitHub refused the request because of a rate limit, else None."""
     if resp.status_code not in (403, 429):
         return None
@@ -139,7 +140,7 @@ class GitHubError(Exception):
 
 
 class GitHubClient:
-    def __init__(self, token: Optional[str] = None, base_url: Optional[str] = None):
+    def __init__(self, token: str | None = None, base_url: str | None = None):
         self.token = token if token is not None else settings.github_token
         self.base_url = (base_url or settings.github_api_url).rstrip("/")
         self._client = httpx.AsyncClient(
@@ -152,9 +153,9 @@ class GitHubClient:
                 **({"Authorization": f"Bearer {self.token}"} if self.token else {}),
             },
         )
-        self._repo_cache: Optional[tuple[float, Dict[str, Any]]] = None
+        self._repo_cache: tuple[float, dict[str, Any]] | None = None
         # Short-lived cache for reads that several pages repeat (inbox, repo page, metrics).
-        self._read_cache: Dict[tuple, tuple[float, Any]] = {}
+        self._read_cache: dict[tuple, tuple[float, Any]] = {}
 
     async def _cached(self, key: tuple, ttl: float, load: Callable[[], Awaitable[Any]]) -> Any:
         hit = self._read_cache.get(key)
@@ -190,8 +191,8 @@ class GitHubClient:
             raise GitHubError(resp.status_code, detail)
         return resp
 
-    async def _paginate(self, path: str, params: Dict[str, Any], max_pages: int = 10) -> List[Any]:
-        items: List[Any] = []
+    async def _paginate(self, path: str, params: dict[str, Any], max_pages: int = 10) -> list[Any]:
+        items: list[Any] = []
         params = {"per_page": 100, **params}
         for page in range(1, max_pages + 1):
             resp = await self._request("GET", path, params={**params, "page": page})
@@ -203,17 +204,17 @@ class GitHubClient:
 
     # ---- Viewer & repositories -------------------------------------------------
 
-    async def viewer(self) -> Dict[str, Any]:
+    async def viewer(self) -> dict[str, Any]:
         resp = await self._request("GET", "/user")
         return resp.json()
 
-    async def list_repos(self, refresh: bool = False) -> Dict[str, Any]:
+    async def list_repos(self, refresh: bool = False) -> dict[str, Any]:
         """All repositories the token can see, with open PR/issue counts (GraphQL)."""
         if not refresh and self._repo_cache and time.monotonic() - self._repo_cache[0] < REPO_CACHE_TTL_SEC:
             return self._repo_cache[1]
 
-        repos: List[Dict[str, Any]] = []
-        cursor: Optional[str] = None
+        repos: list[dict[str, Any]] = []
+        cursor: str | None = None
         login = ""
         for _ in range(MAX_REPO_PAGES):
             viewer = (await self._graphql(REPOS_QUERY, {"cursor": cursor}))["viewer"]
@@ -228,32 +229,32 @@ class GitHubClient:
         self._repo_cache = (time.monotonic(), result)
         return result
 
-    async def _graphql(self, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+    async def _graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         resp = await self._request("POST", "/graphql", json={"query": query, "variables": variables})
         payload = resp.json()
         if payload.get("errors"):
             raise GitHubError(502, str(payload["errors"]))
         return payload["data"]
 
-    async def repo_overview(self, owner: str, repo: str) -> Dict[str, Any]:
+    async def repo_overview(self, owner: str, repo: str) -> dict[str, Any]:
         data = await self._graphql(REPO_OVERVIEW_QUERY, {"owner": owner, "name": repo})
         if not data.get("repository"):
             raise GitHubError(404, f"{owner}/{repo} not found")
         return data["repository"]
 
-    async def open_pulls_detail(self, owner: str, repo: str) -> Dict[int, Dict[str, Any]]:
+    async def open_pulls_detail(self, owner: str, repo: str) -> dict[int, dict[str, Any]]:
         """Size, files, author association and CI rollup for every open PR, keyed by number."""
         data = await self._cached(("detail", owner, repo), READ_TTL_SEC, lambda: self._graphql(
             OPEN_PULLS_DETAIL_QUERY, {"owner": owner, "name": repo}))
         nodes = ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
         return {n["number"]: n for n in nodes}
 
-    async def merged_pulls(self, owner: str, repo: str) -> List[Dict[str, Any]]:
+    async def merged_pulls(self, owner: str, repo: str) -> list[dict[str, Any]]:
         data = await self._cached(("merged", owner, repo), READ_TTL_SEC, lambda: self._graphql(
             MERGED_PULLS_QUERY, {"owner": owner, "name": repo}))
         return ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
 
-    async def participation(self, owner: str, repo: str) -> Optional[Dict[str, List[int]]]:
+    async def participation(self, owner: str, repo: str) -> dict[str, list[int]] | None:
         """Weekly commit counts for the last 52 weeks; None while GitHub is still computing them."""
         resp = await self._request("GET", f"/repos/{owner}/{repo}/stats/participation")
         if resp.status_code == 202 or not resp.content:
@@ -262,20 +263,20 @@ class GitHubClient:
 
     # ---- Pull requests ---------------------------------------------------------
 
-    async def list_pulls(self, owner: str, repo: str, state: str = "open") -> List[Dict[str, Any]]:
+    async def list_pulls(self, owner: str, repo: str, state: str = "open") -> list[dict[str, Any]]:
         return await self._cached(("pulls", owner, repo, state), READ_TTL_SEC, lambda: self._paginate(
             f"/repos/{owner}/{repo}/pulls", {"state": state, "sort": "updated", "direction": "desc"}, 3))
 
-    async def get_pull(self, owner: str, repo: str, number: int) -> Dict[str, Any]:
+    async def get_pull(self, owner: str, repo: str, number: int) -> dict[str, Any]:
         resp = await self._request("GET", f"/repos/{owner}/{repo}/pulls/{number}")
         return resp.json()
 
-    async def list_pull_files(self, owner: str, repo: str, number: int) -> List[Dict[str, Any]]:
+    async def list_pull_files(self, owner: str, repo: str, number: int) -> list[dict[str, Any]]:
         return await self._paginate(
             f"/repos/{owner}/{repo}/pulls/{number}/files", {}, max_pages=MAX_PR_FILES // 100
         )
 
-    async def compare(self, owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
+    async def compare(self, owner: str, repo: str, base: str, head: str) -> dict[str, Any]:
         """Commits and per-file patches between two commits (used for incremental reviews)."""
         resp = await self._request("GET", f"/repos/{owner}/{repo}/compare/{base}...{head}")
         return resp.json()
@@ -288,8 +289,8 @@ class GitHubClient:
         commit_id: str,
         body: str,
         event: str,
-        comments: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        comments: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         resp = await self._request(
             "POST",
             f"/repos/{owner}/{repo}/pulls/{number}/reviews",
@@ -300,27 +301,27 @@ class GitHubClient:
 
     # ---- Checks & Actions (CI diagnosis) -------------------------------------------------
 
-    async def check_runs(self, owner: str, repo: str, sha: str) -> List[Dict[str, Any]]:
+    async def check_runs(self, owner: str, repo: str, sha: str) -> list[dict[str, Any]]:
         resp = await self._request("GET", f"/repos/{owner}/{repo}/commits/{sha}/check-runs",
                                    params={"per_page": 100})
         return resp.json().get("check_runs", [])
 
-    async def actions_job(self, owner: str, repo: str, job_id: int) -> Dict[str, Any]:
+    async def actions_job(self, owner: str, repo: str, job_id: int) -> dict[str, Any]:
         resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/jobs/{job_id}")
         return resp.json()
 
-    async def actions_run(self, owner: str, repo: str, run_id: int) -> Dict[str, Any]:
+    async def actions_run(self, owner: str, repo: str, run_id: int) -> dict[str, Any]:
         resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/runs/{run_id}")
         return resp.json()
 
     async def workflow_runs(self, owner: str, repo: str, workflow_id: int, branch: str,
-                            limit: int = 5) -> List[Dict[str, Any]]:
+                            limit: int = 5) -> list[dict[str, Any]]:
         resp = await self._request(
             "GET", f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",
             params={"branch": branch, "status": "completed", "per_page": limit})
         return resp.json().get("workflow_runs", [])
 
-    async def run_jobs(self, owner: str, repo: str, run_id: int) -> List[Dict[str, Any]]:
+    async def run_jobs(self, owner: str, repo: str, run_id: int) -> list[dict[str, Any]]:
         resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
                                    params={"per_page": 100})
         return resp.json().get("jobs", [])
@@ -338,7 +339,7 @@ class GitHubClient:
 
     # ---- Contents, branches & PR creation (fix PRs) ----------------------------------
 
-    async def get_file(self, owner: str, repo: str, path: str, ref: str) -> Dict[str, Any]:
+    async def get_file(self, owner: str, repo: str, path: str, ref: str) -> dict[str, Any]:
         """File metadata + decoded text at ``ref``."""
         resp = await self._request("GET", f"/repos/{owner}/{repo}/contents/{path}", params={"ref": ref})
         data = resp.json()
@@ -352,7 +353,7 @@ class GitHubClient:
                             json={"ref": f"refs/heads/{branch}", "sha": sha})
 
     async def update_file(self, owner: str, repo: str, path: str, branch: str, text: str,
-                          blob_sha: str, message: str) -> Dict[str, Any]:
+                          blob_sha: str, message: str) -> dict[str, Any]:
         resp = await self._request("PUT", f"/repos/{owner}/{repo}/contents/{path}", json={
             "message": message, "branch": branch, "sha": blob_sha,
             "content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
@@ -360,7 +361,7 @@ class GitHubClient:
         return resp.json()
 
     async def create_pull(self, owner: str, repo: str, title: str, head: str, base: str,
-                          body: str) -> Dict[str, Any]:
+                          body: str) -> dict[str, Any]:
         resp = await self._request("POST", f"/repos/{owner}/{repo}/pulls",
                                    json={"title": title, "head": head, "base": base, "body": body})
         self.invalidate(owner, repo)
@@ -368,14 +369,14 @@ class GitHubClient:
 
     # ---- Issues ----------------------------------------------------------------
 
-    async def list_issues(self, owner: str, repo: str, state: str = "open") -> List[Dict[str, Any]]:
+    async def list_issues(self, owner: str, repo: str, state: str = "open") -> list[dict[str, Any]]:
         items = await self._paginate(
             f"/repos/{owner}/{repo}/issues", {"state": state, "sort": "updated"}, 3
         )
         # The issues endpoint also returns pull requests; keep real issues only.
         return [i for i in items if "pull_request" not in i]
 
-    async def create_issue(self, owner: str, repo: str, title: str, body: str) -> Dict[str, Any]:
+    async def create_issue(self, owner: str, repo: str, title: str, body: str) -> dict[str, Any]:
         resp = await self._request(
             "POST", f"/repos/{owner}/{repo}/issues", json={"title": title, "body": body}
         )

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -31,7 +31,7 @@ class DiffHunk(BaseModel):
     old_count: int
     new_start: int
     new_count: int
-    lines: List[DiffLine] = Field(default_factory=list)
+    lines: list[DiffLine] = Field(default_factory=list)
 
 
 class Finding(BaseModel):
@@ -44,24 +44,40 @@ class Finding(BaseModel):
     file_path: str
     line_number: int
     matched_text: str
-    context: Optional[str] = None
-    entropy: Optional[float] = None
-    cwe: Optional[str] = None
-    suggested_fix: Optional[str] = None
-    diff_patch: Optional[str] = None
+    context: str | None = None
+    entropy: float | None = None
+    cwe: str | None = None
+    suggested_fix: str | None = None
+    diff_patch: str | None = None
 
     def mask_secret(self) -> str:
-        """Mask matched secret text for safe display."""
-        if len(self.matched_text) <= 8:
-            return "*" * len(self.matched_text)
-        visible = self.matched_text[:4]
-        return f"{visible}{'*' * (len(self.matched_text) - 4)}"
+        """Mask matched secret text for safe display. Reveals at most 4 chars, none if short."""
+        return mask_text(self.matched_text)
+
+    def redacted(self) -> "Finding":
+        """Return a copy safe to write to reports: secrets masked in matched_text and context."""
+        if self.rule_type not in (RuleType.SECRET, RuleType.ENTROPY):
+            return self.model_copy()
+        masked = self.mask_secret()
+        update = {"matched_text": masked}
+        if self.context and self.matched_text:
+            update["context"] = self.context.replace(self.matched_text, masked)
+        if self.diff_patch and self.matched_text:
+            update["diff_patch"] = self.diff_patch.replace(self.matched_text, masked)
+        return self.model_copy(update=update)
+
+
+def mask_text(value: str) -> str:
+    """Mask a secret: short values are fully hidden, long ones keep only a 4-char prefix."""
+    if len(value) < 16:
+        return "*" * len(value)
+    return f"{value[:4]}{'*' * (len(value) - 4)}"
 
 
 class ScanReport(BaseModel):
     repo_path: str
     target_ref: str
-    findings: List[Finding] = Field(default_factory=list)
+    findings: list[Finding] = Field(default_factory=list)
     scanned_files_count: int = 0
     scanned_lines_count: int = 0
     execution_time_sec: float = 0.0

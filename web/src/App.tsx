@@ -4,7 +4,7 @@ import { CommandPalette, PaletteButton } from "./components/CommandPalette";
 import { api } from "./api";
 import { MonitorIcon, MoonIcon, ShieldIcon, SunIcon } from "./components/icons";
 import { useAsync } from "./hooks";
-import { GamificationProvider, ProgressChip } from "./gamification";
+import { GamificationProvider, ProgressChip, useGamification } from "./gamification";
 import { InboxProvider, useInbox } from "./inbox";
 import { ThemePref, useTheme } from "./theme";
 
@@ -36,6 +36,7 @@ function InboxLink() {
 
 function Shell() {
   const location = useLocation();
+  const { enabled: gamificationOn } = useGamification();
   const status = useAsync(() => api.status(), []);
   const [theme, setTheme] = useTheme();
   const s = status.data;
@@ -52,7 +53,7 @@ function Shell() {
             <NavLink to="/" end>Genel bakış</NavLink>
             <InboxLink />
             <NavLink to="/metrics">Metrikler</NavLink>
-            <NavLink to="/achievements">Başarılar</NavLink>
+            {gamificationOn && <NavLink to="/achievements">Başarılar</NavLink>}
           </nav>
           <div className="topbar-meta">
             <PaletteButton />

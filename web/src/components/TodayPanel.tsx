@@ -22,7 +22,7 @@ function greeting(): string {
 /** Home-page summary: who you are on the ladder, what is waiting, and the one thing to do next. */
 export function TodayPanel({ login }: { login?: string }) {
   const { data: inbox } = useInbox();
-  const { data: g } = useGamification();
+  const { data: g, enabled: gamificationOn } = useGamification();
   const counts = inbox?.counts ?? {};
   const approve = counts.approve ?? 0;
   const goalLeft = g ? Math.max(0, g.streak.goal - g.streak.today) : 0;
@@ -31,7 +31,9 @@ export function TodayPanel({ login }: { login?: string }) {
     ? { to: "/triage", text: `${approve} review'u hızlı modda onayla`, primary: true }
     : (inbox?.actionable ?? 0) > 0
       ? { to: "/inbox", text: "Bekleyenlere git", primary: true }
-      : { to: "/achievements", text: "İlerlemene bak", primary: false };
+      : gamificationOn
+        ? { to: "/achievements", text: "İlerlemene bak", primary: false }
+        : { to: "/metrics", text: "Metriklere bak", primary: false };
 
   return (
     <section className="today">

@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -9,24 +9,26 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from gitshield import __version__
-from gitshield.web.config import settings
-from gitshield.web.db import Database
-from gitshield.web.github import GitHubClient, GitHubError
-from gitshield.web.llm import get_provider
 from gitshield.web.automation import AutoReviewer, approve_dependency_batch, build_inbox
 from gitshield.web.ci_diagnosis import diagnose
-from gitshield.web.gamification import compute as compute_gamification
+from gitshield.web.config import settings
+from gitshield.web.db import Database
 from gitshield.web.fixes import FixError, create_fix_pr, preview_fix
+from gitshield.web.gamification import compute as compute_gamification
+from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.insights import pr_insights
+from gitshield.web.llm import get_provider
 from gitshield.web.metrics import build_metrics
-from gitshield.web.notify import app_url, channels as notify_channels, send as send_notification
-from gitshield.web.security import LocalOnlyMiddleware
+from gitshield.web.notify import app_url
+from gitshield.web.notify import channels as notify_channels
+from gitshield.web.notify import send as send_notification
 from gitshield.web.review import begin_review, comment_to_issue, run_review, submit_review
+from gitshield.web.security import ApiTokenMiddleware, LocalOnlyMiddleware
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 # Strong references so background review tasks are not garbage-collected mid-run.
-_tasks: Set[asyncio.Task] = set()
+_tasks: set[asyncio.Task] = set()
 
 
 @asynccontextmanager
@@ -39,9 +41,12 @@ async def lifespan(app: FastAPI):
     yield
     await app.state.watcher.stop()
     await app.state.gh.aclose()
+    app.state.db.close()
 
 
 app = FastAPI(title="GitShield", version=__version__, lifespan=lifespan)
+# Added first so it runs inside LocalOnlyMiddleware: host and CSRF checks answer before the token.
+app.add_middleware(ApiTokenMiddleware)
 app.add_middleware(LocalOnlyMiddleware)
 
 
@@ -59,7 +64,7 @@ def gh(request: Request) -> GitHubClient:
     return request.app.state.gh
 
 
-def _review_or_404(request: Request, review_id: int) -> Dict[str, Any]:
+def _review_or_404(request: Request, review_id: int) -> dict[str, Any]:
     review = db(request).get_review(review_id)
     if not review:
         raise HTTPException(404, "Review not found")
@@ -70,7 +75,7 @@ def _review_or_404(request: Request, review_id: int) -> Dict[str, Any]:
 
 
 @app.get("/api/status")
-async def status(request: Request) -> Dict[str, Any]:
+async def status(request: Request) -> dict[str, Any]:
     login = None
     error = None
     if settings.github_token:
@@ -92,7 +97,7 @@ async def status(request: Request) -> Dict[str, Any]:
 
 
 @app.get("/api/repos")
-async def list_repos(request: Request, refresh: bool = False) -> Dict[str, Any]:
+async def list_repos(request: Request, refresh: bool = False) -> dict[str, Any]:
     data = await gh(request).list_repos(refresh=refresh)
     stats = db(request).repo_stats()
     repos = []
@@ -125,7 +130,7 @@ async def list_repos(request: Request, refresh: bool = False) -> Dict[str, Any]:
     return {"login": data["login"], "repos": repos}
 
 
-def _languages(conn: Dict[str, Any]) -> list:
+def _languages(conn: dict[str, Any]) -> list:
     total = conn.get("totalSize") or 0
     return [
         {"name": e["node"]["name"], "color": e["node"]["color"], "bytes": e["size"],
@@ -135,7 +140,7 @@ def _languages(conn: Dict[str, Any]) -> list:
 
 
 @app.get("/api/repos/{owner}/{repo}/overview")
-async def repo_overview(request: Request, owner: str, repo: str) -> Dict[str, Any]:
+async def repo_overview(request: Request, owner: str, repo: str) -> dict[str, Any]:
     client = gh(request)
     r, participation = await asyncio.gather(
         client.repo_overview(owner, repo), client.participation(owner, repo)
@@ -286,7 +291,7 @@ async def start_review(request: Request, owner: str, repo: str, number: int, ful
         return {"id": running["id"], "status": "running", "existing": True}
     client = gh(request)
     pr = await client.get_pull(owner, repo, number)
-    provider = get_provider()
+    provider = get_provider(db(request))
     review_id = begin_review(db(request), pr, f"{owner}/{repo}", provider)
     task = asyncio.create_task(
         run_review(db(request), client, provider, review_id, owner, repo, number, force_full=full)
@@ -302,8 +307,8 @@ async def get_review(request: Request, review_id: int):
 
 
 class ReviewPatch(BaseModel):
-    summary: Optional[str] = None
-    verdict: Optional[str] = None
+    summary: str | None = None
+    verdict: str | None = None
 
 
 @app.patch("/api/reviews/{review_id}")
@@ -318,9 +323,9 @@ async def patch_review(request: Request, review_id: int, patch: ReviewPatch):
 
 
 class CommentPatch(BaseModel):
-    included: Optional[bool] = None
-    title: Optional[str] = None
-    body: Optional[str] = None
+    included: bool | None = None
+    title: str | None = None
+    body: str | None = None
 
 
 @app.patch("/api/comments/{comment_id}")
@@ -346,7 +351,7 @@ async def comment_draft_issue(request: Request, comment_id: int):
 
 
 class SubmitBody(BaseModel):
-    event: Optional[str] = None
+    event: str | None = None
 
 
 @app.post("/api/reviews/{review_id}/submit")
@@ -367,6 +372,8 @@ class GoalBody(BaseModel):
 
 @app.get("/api/gamification")
 async def gamification(request: Request):
+    if not settings.gamification_enabled:
+        return {"enabled": False}
     return compute_gamification(db(request))
 
 
@@ -379,6 +386,8 @@ async def gamification_seen(request: Request):
 async def gamification_goal(request: Request, body: GoalBody):
     if not 1 <= body.goal <= 30:
         raise HTTPException(422, "Günlük hedef 1-30 arası olmalı.")
+    if not settings.gamification_enabled:
+        return {"enabled": False}
     db(request).set_setting("daily_goal", str(body.goal))
     return compute_gamification(db(request))
 
@@ -398,7 +407,7 @@ async def ci_diagnosis(request: Request, owner: str, repo: str, number: int,
         # Pending checks may have finished since; recompute until everything is settled.
         if not cached.get("pending"):
             return cached
-    provider = get_provider() if ai else None
+    provider = get_provider(db(request)) if ai else None
     if ai and not provider:
         raise HTTPException(409, "AI ile derinleştirmek için bir LLM yapılandırılmalı.")
     result = await diagnose(client, owner, repo, pr, provider)
@@ -422,7 +431,7 @@ class FixBody(BaseModel):
     replacement: str
 
 
-def _comment_or_404(request: Request, comment_id: int) -> Dict[str, Any]:
+def _comment_or_404(request: Request, comment_id: int) -> dict[str, Any]:
     comment = db(request).get_comment(comment_id)
     if not comment:
         raise HTTPException(404, "Comment not found")
@@ -432,7 +441,8 @@ def _comment_or_404(request: Request, comment_id: int) -> Dict[str, Any]:
 @app.post("/api/comments/{comment_id}/fix/preview")
 async def fix_preview(request: Request, comment_id: int):
     try:
-        return await preview_fix(db(request), gh(request), get_provider(), _comment_or_404(request, comment_id))
+        return await preview_fix(db(request), gh(request), get_provider(db(request)),
+                                 _comment_or_404(request, comment_id))
     except FixError as e:
         raise HTTPException(422, str(e)) from e
 
@@ -454,8 +464,8 @@ class MemoryBody(BaseModel):
 
 
 class MemoryPatch(BaseModel):
-    text: Optional[str] = None
-    active: Optional[bool] = None
+    text: str | None = None
+    active: bool | None = None
 
 
 class SuppressBody(BaseModel):
@@ -510,7 +520,7 @@ async def suppress_comment(request: Request, comment_id: int, body: SuppressBody
 
 
 class BatchBody(BaseModel):
-    numbers: List[int]
+    numbers: list[int]
     allow_major: bool = False
 
 
@@ -551,13 +561,13 @@ async def notifications_test():
 
 
 @app.get("/api/inbox")
-async def inbox(request: Request) -> Dict[str, Any]:
+async def inbox(request: Request) -> dict[str, Any]:
     return await build_inbox(db(request), gh(request))
 
 
 class RepoSettingsBody(BaseModel):
-    auto_review: Optional[bool] = None
-    include_drafts: Optional[bool] = None
+    auto_review: bool | None = None
+    include_drafts: bool | None = None
 
 
 @app.get("/api/repos/{owner}/{repo}/settings")
@@ -591,11 +601,11 @@ async def automation_run(request: Request):
 
 
 class DraftIssuePatch(BaseModel):
-    title: Optional[str] = None
-    body: Optional[str] = None
+    title: str | None = None
+    body: str | None = None
 
 
-def _draft_or_404(request: Request, issue_id: int) -> Dict[str, Any]:
+def _draft_or_404(request: Request, issue_id: int) -> dict[str, Any]:
     issue = db(request).get_draft_issue(issue_id)
     if not issue:
         raise HTTPException(404, "Draft issue not found")

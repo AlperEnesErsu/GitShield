@@ -12,6 +12,20 @@ from tests.test_web_review import PR
 FILE = "import os\nAPI_KEY = 'x'\nquery = 'SELECT * FROM users WHERE id = ' + user_id\nprint('done')\n"
 
 
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
+
+
 class FixGitHub:
     def __init__(self, fork=False):
         self.pr = copy.deepcopy(PR)
@@ -62,8 +76,8 @@ def test_apply_edit_keeps_crlf_and_validates_range():
         apply_edit("a\nb", 2, 5, "x")
 
 
-def test_preview_then_create_fix_pr(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_preview_then_create_fix_pr(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     gh = FixGitHub()
     comment = _comment(db)
 
@@ -83,8 +97,8 @@ def test_preview_then_create_fix_pr(tmp_path):
     assert db.get_comment(comment["id"])["fix_pr_url"] == result["url"]
 
 
-def test_fork_prs_cannot_get_fix_branches(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_fork_prs_cannot_get_fix_branches(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     gh = FixGitHub(fork=True)
     comment = _comment(db)
     preview = asyncio.run(preview_fix(db, gh, FixProvider(), comment))
@@ -102,8 +116,8 @@ def test_unsafe_paths_are_refused(tmp_path, path):
         safe_repo_path(path)
 
 
-def test_hostile_comment_path_never_reaches_github(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_hostile_comment_path_never_reaches_github(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     gh = FixGitHub()
     comment = _comment(db)
     comment["path"] = "../../../user/repos"
@@ -112,3 +126,8 @@ def test_hostile_comment_path_never_reaches_github(tmp_path):
     with pytest.raises(FixError):
         asyncio.run(create_fix_pr(db, gh, comment, 3, 3, "x"))
     assert not any(c[0] in ("get_file", "branch", "update", "pull") for c in gh.calls)
+
+def test_fix_for_a_missing_review_is_a_clean_error(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
+    with pytest.raises(FixError, match="incelemesi bulunamadı"):
+        asyncio.run(preview_fix(db, FixGitHub(), None, {"review_id": 999, "path": "app.py", "line": 1}))

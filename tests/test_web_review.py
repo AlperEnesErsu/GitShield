@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -39,9 +39,23 @@ FILES = [
 ]
 
 
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
+
+
 class FakeGitHub:
     def __init__(self, fail_own_pr: bool = False):
-        self.reviews: List[Dict[str, Any]] = []
+        self.reviews: list[dict[str, Any]] = []
         self.fail_own_pr = fail_own_pr
 
     async def get_pull(self, owner, repo, number):
@@ -63,7 +77,7 @@ class FakeProvider:
     model = "fake-1"
 
     def __init__(self):
-        self.prompts: List[str] = []
+        self.prompts: list[str] = []
 
     async def complete(self, system, user, schema):
         self.prompts.append(user)
@@ -111,8 +125,8 @@ def _run(db, gh, provider):
     return db.get_review(review_id)
 
 
-def test_pipeline_with_llm_redacts_secrets_and_verifies(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_pipeline_with_llm_redacts_secrets_and_verifies(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     provider = FakeProvider()
     review = _run(db, FakeGitHub(), provider)
 
@@ -139,8 +153,8 @@ def test_pipeline_with_llm_redacts_secrets_and_verifies(tmp_path):
     assert len(db.list_draft_issues("acme/app")) == len(drafts)
 
 
-def test_pipeline_without_llm_uses_scanner_only(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_pipeline_without_llm_uses_scanner_only(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     review = _run(db, FakeGitHub(), None)
     assert review["status"] == "ready"
     assert review["comments"], "scanner should flag the hardcoded AWS key"
@@ -150,8 +164,8 @@ def test_pipeline_without_llm_uses_scanner_only(tmp_path):
     assert all("AKIAIOSFODNN7EXAMPLE" not in c["body"] for c in review["comments"])
 
 
-def test_submit_falls_back_to_comment_on_own_pr(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_submit_falls_back_to_comment_on_own_pr(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     review = _run(db, FakeGitHub(), FakeProvider())
     gh = FakeGitHub(fail_own_pr=True)
 
@@ -168,20 +182,20 @@ def test_submit_falls_back_to_comment_on_own_pr(tmp_path):
     assert steps["approve"] == "done" and steps["submit"] == "done"
 
 
-def test_failure_marks_running_step_failed(tmp_path):
+def test_failure_marks_running_step_failed(tmp_path, open_db):
     class BrokenProvider(FakeProvider):
         async def complete(self, system, user, schema):
             raise RuntimeError("quota exceeded")
 
-    db = Database(tmp_path / "t.db")
+    db = open_db(tmp_path / "t.db")
     review = _run(db, FakeGitHub(), BrokenProvider())
     assert review["status"] == "failed" and review["error"] == "quota exceeded"
     steps = {s["key"]: s["status"] for s in review["progress"]}
     assert steps["scan"] == "done" and steps["ai_review"] == "failed"
 
 
-def test_interrupted_reviews_are_failed_on_startup(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_interrupted_reviews_are_failed_on_startup(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     rid = db.create_review("acme/app", 7, "t", "abc123", "none", "")
     db.update_review(rid, progress=[{"key": "scan", "status": "running", "detail": "", "started_at": "x",
                                      "finished_at": None}])

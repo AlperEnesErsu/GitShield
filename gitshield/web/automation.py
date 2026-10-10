@@ -2,9 +2,10 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
-from gitshield.web.db import Database, now
+from gitshield.web.config import settings
+from gitshield.web.db import Database, hours_ago, now
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.insights import pr_insights
 from gitshield.web.llm import get_provider
@@ -17,8 +18,8 @@ PRIORITY = {"approve": 1, "failed": 2, "outdated": 3, "new": 4, "running": 5, "d
 MAX_CONCURRENT_REPOS = 6
 
 
-def _pull_item(kind: str, repo: str, p: Dict[str, Any], review: Optional[Dict[str, Any]],
-               detail: Optional[Dict[str, Any]], ci_blame: Optional[str] = None) -> Dict[str, Any]:
+def _pull_item(kind: str, repo: str, p: dict[str, Any], review: dict[str, Any] | None,
+               detail: dict[str, Any] | None, ci_blame: str | None = None) -> dict[str, Any]:
     return {
         **pr_insights(detail, review, ci_blame),
         "kind": kind,
@@ -38,7 +39,7 @@ def _pull_item(kind: str, repo: str, p: Dict[str, Any], review: Optional[Dict[st
     }
 
 
-def classify(p: Dict[str, Any], review: Optional[Dict[str, Any]]) -> str:
+def classify(p: dict[str, Any], review: dict[str, Any] | None) -> str:
     if not review:
         return "new"
     if review["status"] == "running":
@@ -50,7 +51,7 @@ def classify(p: Dict[str, Any], review: Optional[Dict[str, Any]]) -> str:
     return "approve" if review["status"] == "ready" else "done"
 
 
-async def build_inbox(db: Database, gh: GitHubClient) -> Dict[str, Any]:
+async def build_inbox(db: Database, gh: GitHubClient) -> dict[str, Any]:
     """Everything that needs the user's attention across all repositories, most urgent first."""
     repos = (await gh.list_repos())["repos"]
     active = [r["nameWithOwner"] for r in repos if r["pullRequests"]["totalCount"] and not r["isArchived"]]
@@ -67,7 +68,7 @@ async def build_inbox(db: Database, gh: GitHubClient) -> Dict[str, Any]:
                 return full_name, [], {}, e.message
 
     results = await asyncio.gather(*(pulls_for(r) for r in active))
-    items: List[Dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
     errors = []
     for full_name, pulls, details, error in results:
         if error:
@@ -79,7 +80,7 @@ async def build_inbox(db: Database, gh: GitHubClient) -> Dict[str, Any]:
                 items.append(_pull_item(kind, full_name, p, latest.get(p["number"]), details.get(p["number"]),
                                         db.ci_verdict(full_name, p["number"], p["head"]["sha"])))
 
-    drafts: Dict[str, List[Dict[str, Any]]] = {}
+    drafts: dict[str, list[dict[str, Any]]] = {}
     for d in db.list_pending_drafts():
         drafts.setdefault(d["repo"], []).append(d)
     for repo, ds in drafts.items():
@@ -93,7 +94,7 @@ async def build_inbox(db: Database, gh: GitHubClient) -> Dict[str, Any]:
 
     # Most urgent kind first; within a kind, riskiest first, then the oldest waiting.
     items.sort(key=lambda i: (i["priority"], -((i.get("risk") or {}).get("score") or 0), i["updated_at"]))
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for i in items:
         counts[i["kind"]] = counts.get(i["kind"], 0) + 1
     actionable = sum(n for k, n in counts.items() if k != "running")
@@ -111,18 +112,29 @@ class AutoReviewer:
         self.gh = gh
         self.interval = interval_sec
         self._wake = asyncio.Event()
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self.busy = False
-        self.current: Optional[str] = None
-        self.last_run_at: Optional[str] = None
-        self.next_run_at: Optional[float] = None
-        self.last_error: Optional[str] = None
+        self.current: str | None = None
+        self.last_run_at: str | None = None
+        self.next_run_at: float | None = None
+        self.last_error: str | None = None
         self.started_reviews = 0
-        self._inflight: Set[str] = set()
+        self._inflight: set[str] = set()
 
     @property
     def enabled(self) -> bool:
         return self.interval > 0
+
+    def auto_reviews_today(self) -> int:
+        """Automatic reviews started in the last 24 hours (the DB is the source of truth)."""
+        return self.db.count_reviews("auto", hours_ago(24))
+
+    def auto_reviews_remaining(self) -> int | None:
+        """Budget left for today; None when GITSHIELD_MAX_AUTO_REVIEWS_PER_DAY is 0 (unlimited)."""
+        cap = settings.max_auto_reviews_per_day
+        if cap <= 0:
+            return None
+        return max(0, cap - self.auto_reviews_today())
 
     def start(self) -> None:
         if self.enabled and not self._task:
@@ -139,7 +151,7 @@ class AutoReviewer:
     def trigger(self) -> None:
         self._wake.set()
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         loop = asyncio.get_running_loop()
         next_in = None
         if self.next_run_at is not None:
@@ -153,6 +165,8 @@ class AutoReviewer:
             "next_run_in_sec": next_in,
             "last_error": self.last_error,
             "started_reviews": self.started_reviews,
+            "max_auto_reviews_per_day": settings.max_auto_reviews_per_day,
+            "auto_reviews_remaining": self.auto_reviews_remaining(),
             "repos": [s["repo"] for s in self.db.auto_review_repos()],
         }
 
@@ -164,7 +178,7 @@ class AutoReviewer:
             self._wake.clear()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=self.interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def tick(self) -> int:
@@ -174,13 +188,13 @@ class AutoReviewer:
         self.busy = True
         started = 0
         try:
-            for settings in self.db.auto_review_repos():
-                full_name = settings["repo"]
+            for repo_settings in self.db.auto_review_repos():
+                full_name = repo_settings["repo"]
                 owner, name = full_name.split("/", 1)
                 pulls = await self.gh.list_pulls(owner, name)
                 latest = self.db.latest_reviews(full_name)
                 for p in pulls:
-                    if p.get("draft") and not settings["include_drafts"]:
+                    if p.get("draft") and not repo_settings["include_drafts"]:
                         continue
                     review = latest.get(p["number"])
                     # Skip when this exact commit was already reviewed, is running, or failed
@@ -190,11 +204,16 @@ class AutoReviewer:
                     key = f"{full_name}#{p['number']}@{p['head']['sha']}"
                     if key in self._inflight:
                         continue
+                    remaining = self.auto_reviews_remaining()
+                    if remaining is not None and remaining <= 0:
+                        # Daily budget used up: the rest waits for the next day's window.
+                        log.info("Auto-review budget for today is used up; %s waits", key)
+                        return started
                     self._inflight.add(key)
                     self.current = f"{full_name} #{p['number']}"
                     try:
                         pr = await self.gh.get_pull(owner, name, p["number"])
-                        provider = get_provider()
+                        provider = get_provider(self.db)
                         review_id = begin_review(self.db, pr, full_name, provider, origin="auto")
                         # Sequential on purpose: keeps LLM usage within free-tier rate limits.
                         await run_review(self.db, self.gh, provider, review_id, owner, name, p["number"])
@@ -214,7 +233,7 @@ class AutoReviewer:
 
 
 async def approve_dependency_batch(store: Database, client: GitHubClient, owner: str, repo: str,
-                                   numbers: List[int], allow_major: bool = False) -> List[Dict[str, Any]]:
+                                   numbers: list[int], allow_major: bool = False) -> list[dict[str, Any]]:
     """Approve dependency-update PRs that are green on CI and clean on the static scan.
 
     Every guard is enforced here, not only in the UI: non-dependency PRs, failing or
@@ -245,6 +264,10 @@ async def approve_dependency_batch(store: Database, client: GitHubClient, owner:
         review_id = begin_review(store, pr, full_name, None, origin="batch")
         await run_review(store, client, None, review_id, owner, repo, number, notify=False)
         review = store.get_review(review_id)
+        if review is None:
+            results.append({"number": number, "status": "failed", "reason": "İnceleme kaydı bulunamadı",
+                            "review_id": review_id})
+            continue
         serious = [c for c in review["comments"] if c["severity"] in ("CRITICAL", "HIGH")]
         if review["status"] != "ready" or serious:
             reason = review["error"] or f"{len(serious)} yüksek önemli tarama bulgusu"
@@ -255,8 +278,13 @@ async def approve_dependency_batch(store: Database, client: GitHubClient, owner:
             f"Bağımlılık güncellemesi: **{dep['package']}**{versions}, {dep['change']}. "
             "CI başarılı, GitShield statik taraması temiz. Toplu onayla onaylandı."
         ))
+        review = store.get_review(review_id)
+        if review is None:
+            results.append({"number": number, "status": "failed", "reason": "İnceleme kaydı bulunamadı",
+                            "review_id": review_id})
+            continue
         try:
-            submitted = await submit_review(store, client, store.get_review(review_id), "APPROVE")
+            submitted = await submit_review(store, client, review, "APPROVE")
             results.append({"number": number, "status": "approved", "url": submitted.get("html_url"),
                             "review_id": review_id})
         except GitHubError as e:

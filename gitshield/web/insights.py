@@ -2,7 +2,7 @@
 
 import math
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 BOT_AUTHORS = {"dependabot[bot]", "dependabot", "renovate[bot]", "renovate"}
 
@@ -34,7 +34,7 @@ BUMP = re.compile(
 GROUP_BUMP = re.compile(r"bump the (?P<group>\S+) group", re.I)
 
 
-def _version_parts(v: str) -> List[int]:
+def _version_parts(v: str) -> list[int]:
     return [int(x) for x in re.findall(r"\d+", v)[:3]]
 
 
@@ -52,7 +52,7 @@ def change_type(old: str, new: str) -> str:
     return "patch"
 
 
-def parse_dependency_update(title: str, author: str) -> Optional[Dict[str, Any]]:
+def parse_dependency_update(title: str, author: str) -> dict[str, Any] | None:
     """Detect dependency-bump PRs (Dependabot/Renovate style titles)."""
     group = GROUP_BUMP.search(title)
     if group:
@@ -71,15 +71,15 @@ def parse_dependency_update(title: str, author: str) -> Optional[Dict[str, Any]]
             "bot": author in BOT_AUTHORS}
 
 
-def compute_risk(pr: Dict[str, Any], review: Optional[Dict[str, Any]] = None,
-                 ci_blame: Optional[str] = None) -> Dict[str, Any]:
+def compute_risk(pr: dict[str, Any], review: dict[str, Any] | None = None,
+                 ci_blame: str | None = None) -> dict[str, Any]:
     """Score 0-100 with the factors that produced it.
 
     ``pr`` is a GraphQL pull request node: additions, deletions, changedFiles,
     authorAssociation, author.login, title, files.nodes[] (path, additions, deletions)
     and commits.nodes[-1].commit.statusCheckRollup.
     """
-    factors: List[Dict[str, Any]] = []
+    factors: list[dict[str, Any]] = []
 
     def add(label: str, points: int) -> None:
         if points > 0:
@@ -144,25 +144,25 @@ def compute_risk(pr: Dict[str, Any], review: Optional[Dict[str, Any]] = None,
     return {"score": score, "level": level, "factors": factors}
 
 
-def pr_ci_state(pr: Dict[str, Any]) -> str:
+def pr_ci_state(pr: dict[str, Any]) -> str:
     commits = (pr.get("commits") or {}).get("nodes") or []
     rollup = (commits[-1]["commit"].get("statusCheckRollup") or {}).get("state") if commits else None
     return ci_state(rollup)
 
 
-def ci_state(rollup: Optional[str]) -> str:
+def ci_state(rollup: str | None) -> str:
     """Map GitHub's statusCheckRollup state to success / failure / pending / none."""
     return {"SUCCESS": "success", "FAILURE": "failure", "ERROR": "failure",
             "PENDING": "pending", "EXPECTED": "pending"}.get(rollup or "", "none")
 
 
-def head_oid(node: Optional[Dict[str, Any]]) -> Optional[str]:
+def head_oid(node: dict[str, Any] | None) -> str | None:
     commits = ((node or {}).get("commits") or {}).get("nodes") or []
     return commits[-1]["commit"].get("oid") if commits else None
 
 
-def pr_insights(node: Optional[Dict[str, Any]], review: Optional[Dict[str, Any]] = None,
-                ci_blame: Optional[str] = None) -> Dict[str, Any]:
+def pr_insights(node: dict[str, Any] | None, review: dict[str, Any] | None = None,
+                ci_blame: str | None = None) -> dict[str, Any]:
     """Risk, CI state and dependency info for one PR; empty values when GitHub returned no detail.
     ``ci_blame`` is the verdict of a cached CI diagnosis for the PR's head commit, if any."""
     if not node:

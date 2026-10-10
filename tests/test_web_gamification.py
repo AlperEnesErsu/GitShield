@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -11,10 +11,24 @@ from gitshield.web.gamification import compute, level_for, review_xp, streaks
 TODAY = date(2026, 10, 10)
 
 
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
+
+
 def at(day_offset: int, hour: int = 14) -> str:
     """ISO timestamp `day_offset` days before TODAY at `hour` local time."""
     local = datetime.combine(TODAY - timedelta(days=day_offset), datetime.min.time()).replace(hour=hour)
-    return local.astimezone().astimezone(timezone.utc).isoformat()
+    return local.astimezone().astimezone(UTC).isoformat()
 
 
 def submit(db, day_offset, *, origin="manual", severities=(), approval_minutes=None, hour=14):
@@ -52,8 +66,8 @@ def test_review_xp():
     assert review_xp({**base, "origin": "batch"}) == 3
 
 
-def test_compute_badges_streak_and_new_flags(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_compute_badges_streak_and_new_flags(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     submit(db, 2)
     submit(db, 1, severities=("CRITICAL", "HIGH"), approval_minutes=4)
     submit(db, 0, hour=2)  # night owl
@@ -94,8 +108,8 @@ def test_goal_and_inbox_zero_via_api(tmp_path, monkeypatch):
         assert json.dumps(badges["inbox-zero"])  # serializable for the UI
 
 
-def test_badges_are_dated_when_earned_not_when_computed(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_badges_are_dated_when_earned_not_when_computed(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     for offset in (5, 4, 3):
         submit(db, offset)
     db.grant_achievement("first-review", earned_at="2099-01-01T00:00:00+00:00")  # recorded late
@@ -103,3 +117,26 @@ def test_badges_are_dated_when_earned_not_when_computed(tmp_path):
     badges = {b["id"]: b for b in g["badges"]}
     assert badges["first-review"]["earned_at"] == at(5), "earlier real date replaces the late record"
     assert badges["streak-3"]["earned_at"] == at(3), "streak badge dated on the day the run hit 3"
+
+def test_approvals_earn_no_more_xp_than_other_verdicts(tmp_path, open_db):
+    totals = {}
+    for verdict in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
+        db = open_db(tmp_path / f"{verdict}.db")
+        rid = submit(db, 1, severities=("HIGH",), approval_minutes=5)
+        db.update_review(rid, verdict=verdict)
+        totals[verdict] = compute(db, today=TODAY)["xp"]
+    assert totals["APPROVE"] == totals["REQUEST_CHANGES"] == totals["COMMENT"]
+
+
+def test_gamification_can_be_switched_off(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from gitshield.web import app as app_module
+    from gitshield.web.config import settings
+
+    monkeypatch.setattr(settings, "db_path", tmp_path / "off.db")
+    monkeypatch.setattr(settings, "auto_review_interval", 0)
+    monkeypatch.setattr(settings, "gamification_enabled", False)
+    with TestClient(app_module.app, base_url="http://127.0.0.1", headers={"X-GitShield-Client": "test"}) as client:
+        assert client.get("/api/gamification").json() == {"enabled": False}
+        assert client.put("/api/gamification/goal", json={"goal": 4}).json() == {"enabled": False}

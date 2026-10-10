@@ -5,16 +5,17 @@ instance of ``schema`` (a Pydantic model).
 """
 
 import asyncio
-import logging
 import json
+import logging
 import os
 import re
-from typing import Any, Optional, Protocol, Type, TypeVar
+from typing import Any, Literal, Protocol, TypeVar, cast
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from gitshield.web.config import settings
+from gitshield.web.db import Database
 
 T = TypeVar("T", bound=BaseModel)
 log = logging.getLogger(__name__)
@@ -29,13 +30,16 @@ class LLMUnavailable(LLMError):
 
 
 class LLMProvider(Protocol):
-    name: str
-    model: str
+    @property
+    def name(self) -> str: ...
 
-    async def complete(self, system: str, user: str, schema: Type[T]) -> T: ...
+    @property
+    def model(self) -> str: ...
+
+    async def complete(self, system: str, user: str, schema: type[T]) -> T: ...
 
 
-def _parse_json(text: str, schema: Type[T]) -> T:
+def _parse_json(text: str, schema: type[T]) -> T:
     """Validate model output, tolerating a surrounding ```json fence."""
     cleaned = text.strip()
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, re.DOTALL)
@@ -55,7 +59,7 @@ RETRY_DELAY_SEC = 5
 async def post_with_retry(vendor: str, url: str, **kwargs: Any) -> httpx.Response:
     """POST to an LLM API, retrying once on a timeout, a dropped connection or a 5xx answer.
     A single slow or flaky call should not fail a whole (possibly unattended) review."""
-    last: Optional[Exception] = None
+    last: Exception | None = None
     for attempt in range(LLM_ATTEMPTS):
         try:
             async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SEC) as client:
@@ -97,24 +101,32 @@ def http_error_message(vendor: str, model: str, resp: httpx.Response) -> str:
     return f"{vendor} API hatası ({code}): {first_line}"
 
 
-def _schema_instruction(schema: Type[BaseModel]) -> str:
+def _schema_instruction(schema: type[BaseModel]) -> str:
     return (
         "\n\nRespond with a single JSON object (no prose, no code fence) that matches this "
         f"JSON Schema:\n{json.dumps(schema.model_json_schema())}"
     )
 
 
+EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORT_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+
+
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, effort: str = "medium"):
         import anthropic
 
         self.model = model
+        if effort not in EFFORT_LEVELS:
+            log.warning("LLM_EFFORT=%r is not one of %s; using medium", effort, ", ".join(EFFORT_LEVELS))
+            effort = "medium"
+        self.effort = cast(EffortLevel, effort)
         self._anthropic = anthropic
         self._client = anthropic.AsyncAnthropic()
 
-    async def complete(self, system: str, user: str, schema: Type[T]) -> T:
+    async def complete(self, system: str, user: str, schema: type[T]) -> T:
         anthropic = self._anthropic
         try:
             response = await self._client.beta.messages.parse(
@@ -123,7 +135,7 @@ class AnthropicProvider:
                 system=system,
                 messages=[{"role": "user", "content": user}],
                 output_format=schema,
-                output_config={"effort": "high"},
+                output_config={"effort": self.effort},
                 # Re-run on Anthropic's recommended model if a safety classifier declines.
                 betas=["server-side-fallback-2026-07-01"],
                 fallbacks="default",
@@ -149,12 +161,12 @@ class AnthropicProvider:
 class GeminiProvider:
     name = "gemini"
 
-    def __init__(self, model: str, fallback: Optional[str] = None):
+    def __init__(self, model: str, fallback: str | None = None):
         self.model = model
         self.fallback = fallback if fallback and fallback != model else None
         self._key = os.getenv("GEMINI_API_KEY", "")
 
-    async def complete(self, system: str, user: str, schema: Type[T]) -> T:
+    async def complete(self, system: str, user: str, schema: type[T]) -> T:
         try:
             return await self._complete(self.model, system, user, schema)
         except LLMUnavailable:
@@ -166,7 +178,7 @@ class GeminiProvider:
             self.model, self.fallback = self.fallback, None
             return await self._complete(self.model, system, user, schema)
 
-    async def _complete(self, model: str, system: str, user: str, schema: Type[T]) -> T:
+    async def _complete(self, model: str, system: str, user: str, schema: type[T]) -> T:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         payload = {
             "systemInstruction": {"parts": [{"text": system + _schema_instruction(schema)}]},
@@ -192,7 +204,7 @@ class OpenAIProvider:
         self.model = model
         self._key = os.getenv("OPENAI_API_KEY", "")
 
-    async def complete(self, system: str, user: str, schema: Type[T]) -> T:
+    async def complete(self, system: str, user: str, schema: type[T]) -> T:
         payload = {
             "model": self.model,
             "messages": [
@@ -212,14 +224,48 @@ class OpenAIProvider:
         return _parse_json(text, schema)
 
 
-def get_provider() -> Optional[LLMProvider]:
-    """Return the configured provider, or None when running scanner-only."""
+class BudgetedProvider:
+    """Every LLM request goes through here first: a daily cap (GITSHIELD_MAX_LLM_CALLS_PER_DAY)
+    stops runaway spend from unattended auto-reviews, retries and repeated clicks."""
+
+    def __init__(self, inner: LLMProvider, db: Database, daily_limit: int):
+        self._inner = inner
+        self._db = db
+        self._limit = daily_limit
+
+    @property
+    def name(self) -> str:
+        return self._inner.name
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    async def complete(self, system: str, user: str, schema: type[T]) -> T:
+        if not self._db.reserve_llm_call(self._limit):
+            raise LLMError(
+                f"Günlük LLM çağrı limiti doldu ({self._limit} çağrı / 24 sa). "
+                "Yarın tekrar dene ya da GITSHIELD_MAX_LLM_CALLS_PER_DAY ile limiti artır."
+            )
+        return await self._inner.complete(system, user, schema)
+
+
+def _make_provider() -> LLMProvider | None:
     provider = settings.llm_provider
     model = settings.llm_model
     if provider == "anthropic":
-        return AnthropicProvider(model)
+        return AnthropicProvider(model, settings.llm_effort)
     if provider == "gemini":
         return GeminiProvider(model, settings.llm_fallback_model)
     if provider == "openai":
         return OpenAIProvider(model)
     return None
+
+
+def get_provider(db: Database) -> LLMProvider | None:
+    """Return the configured provider (metered against the daily budget), or None when running
+    scanner-only."""
+    provider = _make_provider()
+    if provider is None:
+        return None
+    return BudgetedProvider(provider, db, settings.max_llm_calls_per_day)

@@ -6,30 +6,90 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+        exclude:
+          # Keep Windows to a single interpreter to save CI minutes.
+          - os: windows-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.13"
+
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
 
     steps:
       - uses: actions/checkout@v4
-
-      # setup-python's interpreter is not "externally managed" (PEP 668), so --system installs work.
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev,web]"
+        run: uv sync --locked --all-extras
 
       - name: Run tests
-        run: pytest --cov=gitshield tests/
+        run: uv run pytest --cov=gitshield tests/
+
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras
+
+      - name: Ruff
+        run: uv run ruff check gitshield tests
+
+      - name: Mypy
+        run: uv run mypy gitshield
+
+  self-scan:
+    name: GitShield self-scan
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install GitShield
+        run: python -m pip install .
+
+      - name: Scan pull request diff
+        run: gitshield scan --branch "${BASE_SHA}...HEAD" --format sarif --output gitshield.sarif
+
+      # Fork PRs get a read-only token, so the upload would fail; the scan step still gates them.
+      - name: Upload SARIF to code scanning
+        if: always() && hashFiles('gitshield.sarif') != '' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitshield.sarif
 
   web:
     runs-on: ubuntu-latest

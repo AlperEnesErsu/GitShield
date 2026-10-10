@@ -1,0 +1,2 @@
+# Test files carry intentional fake secrets (AWS example keys, Stripe-shaped fixtures) to exercise the rules.
+tests/test_*.py

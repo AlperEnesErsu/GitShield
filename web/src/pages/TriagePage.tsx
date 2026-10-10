@@ -277,6 +277,7 @@ function QueueCleared({ count, done, xp, streak }: {
   xp: number | null;
   streak: number | null;
 }) {
+  const { enabled: gamificationOn } = useGamification();
   const verdicts = Object.values(done).reduce<Record<string, number>>((acc, v) => {
     acc[v] = (acc[v] ?? 0) + 1;
     return acc;
@@ -298,7 +299,7 @@ function QueueCleared({ count, done, xp, streak }: {
       </div>
       <div className="head-actions">
         <Link to="/inbox" className="btn btn-primary">Bekleyenlere dön</Link>
-        <Link to="/achievements" className="btn">Başarılarım</Link>
+        {gamificationOn && <Link to="/achievements" className="btn">Başarılarım</Link>}
       </div>
     </div>
   );

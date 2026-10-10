@@ -24,6 +24,20 @@ DELTA_PATCH = """@@ -2,3 +2,2 @@
  line9"""
 
 
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
+
+
 @pytest.mark.parametrize("old,expected", [
     (1, (1, False)),    # before every hunk
     (3, (None, True)),  # deleted
@@ -64,8 +78,8 @@ def _review(db, gh):
     return db.get_review(rid)
 
 
-def test_incremental_review_tracks_fixes_and_carries_open_comments(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_incremental_review_tracks_fixes_and_carries_open_comments(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     first = _review(db, IncrementalGitHub("abc123"))
     assert first["mode"] == "full" and first["comments"]
     first_titles = {c["title"] for c in first["comments"]}
@@ -86,15 +100,15 @@ def test_incremental_review_tracks_fixes_and_carries_open_comments(tmp_path):
     assert carried and all("taşındı" in c["verification_note"] for c in carried)
 
 
-def test_diverged_history_falls_back_to_full_review(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_diverged_history_falls_back_to_full_review(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     _review(db, IncrementalGitHub("abc123"))
     again = _review(db, IncrementalGitHub("def456", compare_status="diverged"))
     assert again["mode"] == "full" and again["followups"] == []
 
 
-def test_submission_reports_followups(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_submission_reports_followups(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     _review(db, IncrementalGitHub("abc123"))
     second = _review(db, IncrementalGitHub("def456"))
     gh = IncrementalGitHub("def456")

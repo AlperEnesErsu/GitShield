@@ -95,9 +95,23 @@ function BadgeCard({ badge }: { badge: Badge }) {
 }
 
 export function AchievementsPage() {
-  const { data, setData } = useGamification();
+  const { data, enabled, setData } = useGamification();
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "earned" | "locked">("all");
+
+  if (!enabled) {
+    return (
+      <div className="page achievements">
+        <div className="page-head">
+          <div>
+            <p className="eyebrow">Başarılar</p>
+            <h1>Oyunlaştırma kapalı</h1>
+          </div>
+        </div>
+        <p className="muted">Oyunlaştırma kapalı (GITSHIELD_GAMIFICATION=off).</p>
+      </div>
+    );
+  }
 
   if (!data) return <div className="page"><Loading label="İlerleme yükleniyor" /></div>;
   const { streak } = data;

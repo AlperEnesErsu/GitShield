@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -8,7 +8,21 @@ pytest.importorskip("fastapi")
 from gitshield.web.db import Database
 from gitshield.web.metrics import build_metrics, gitshield_metrics, percentile
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
+
+
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
 
 
 def iso(delta_hours: float) -> str:
@@ -37,8 +51,8 @@ class MetricsGitHub:
         return [pr(4, 24 * 5), pr(5, 2), pr(6, 24 * 30, draft=True)]
 
 
-def test_build_metrics(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_build_metrics(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     m = asyncio.run(build_metrics(db, MetricsGitHub(), days=30, sla_days=3))
 
     assert m["repos_checked"] == 1
@@ -67,3 +81,15 @@ def test_gitshield_latencies():
 def test_percentile():
     assert percentile([1, 2, 3, 4], 0.75) == 3.25
     assert percentile([], 0.5) is None
+
+class PullWithoutTimestampGitHub(MetricsGitHub):
+    async def list_pulls(self, owner, repo, state="open"):
+        pulls = await super().list_pulls(owner, repo, state)
+        pulls[0]["created_at"] = None  # seen in the wild for some API responses
+        return pulls
+
+
+def test_open_pull_without_a_timestamp_is_skipped(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
+    m = asyncio.run(build_metrics(db, PullWithoutTimestampGitHub(), days=30, sla_days=3))
+    assert m["open"]["count"] == 1, "the PR with a usable timestamp still counts"

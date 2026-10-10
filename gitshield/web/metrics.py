@@ -2,8 +2,8 @@
 
 import asyncio
 import statistics
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from gitshield.web.db import Database
 from gitshield.web.github import GitHubClient, GitHubError
@@ -12,17 +12,17 @@ MAX_REPOS = 12
 MAX_CONCURRENT = 6
 
 
-def parse_ts(value: Optional[str]) -> Optional[datetime]:
+def parse_ts(value: str | None) -> datetime | None:
     if not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def median(values: List[float]) -> Optional[float]:
+def median(values: list[float]) -> float | None:
     return round(statistics.median(values), 2) if values else None
 
 
-def percentile(values: List[float], q: float) -> Optional[float]:
+def percentile(values: list[float], q: float) -> float | None:
     if not values:
         return None
     ordered = sorted(values)
@@ -36,7 +36,7 @@ def week_start(ts: datetime) -> str:
     return monday.isoformat()
 
 
-def step_seconds(review: Dict[str, Any], first: str, last: str, use_finish: bool = True) -> Optional[float]:
+def step_seconds(review: dict[str, Any], first: str, last: str, use_finish: bool = True) -> float | None:
     steps = {s["key"]: s for s in review.get("progress") or []}
     start = parse_ts((steps.get(first) or {}).get("started_at"))
     end = parse_ts((steps.get(last) or {}).get("finished_at" if use_finish else "started_at"))
@@ -45,11 +45,11 @@ def step_seconds(review: Dict[str, Any], first: str, last: str, use_finish: bool
     return max(0.0, (end - start).total_seconds())
 
 
-def gitshield_metrics(reviews: List[Dict[str, Any]]) -> Dict[str, Any]:
+def gitshield_metrics(reviews: list[dict[str, Any]]) -> dict[str, Any]:
     ai = [s for r in reviews if (s := step_seconds(r, "fetch", "verify")) is not None]
     approval = [s / 60 for r in reviews if r["status"] == "submitted"
                 and (s := step_seconds(r, "approve", "approve")) is not None]
-    weekly: Dict[str, int] = {}
+    weekly: dict[str, int] = {}
     for r in reviews:
         ts = parse_ts(r["created_at"])
         if ts:
@@ -65,8 +65,8 @@ def gitshield_metrics(reviews: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days: float = 3) -> Dict[str, Any]:
-    now = datetime.now(timezone.utc)
+async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days: float = 3) -> dict[str, Any]:
+    now = datetime.now(UTC)
     since = now - timedelta(days=days)
     repos = (await gh.list_repos())["repos"]
     active = [r for r in repos if not r["isArchived"]
@@ -75,7 +75,7 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
     active = active[:MAX_REPOS]
     sem = asyncio.Semaphore(MAX_CONCURRENT)
 
-    async def load(repo: Dict[str, Any]):
+    async def load(repo: dict[str, Any]):
         owner, name = repo["nameWithOwner"].split("/", 1)
         async with sem:
             try:
@@ -87,9 +87,9 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
 
     results = await asyncio.gather(*(load(r) for r in active))
 
-    lead_hours: List[float] = []
+    lead_hours: list[float] = []
     by_repo = []
-    weekly: Dict[str, List[float]] = {}
+    weekly: dict[str, list[float]] = {}
     open_rows = []
     errors = []
     for name, merged, pulls, error in results:
@@ -107,9 +107,10 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
         if repo_hours:
             by_repo.append({"repo": name, "count": len(repo_hours), "median_hours": median(repo_hours)})
         for p in pulls:
-            if p.get("draft"):
+            opened = parse_ts(p["created_at"])
+            if p.get("draft") or opened is None:
                 continue
-            age = (now - parse_ts(p["created_at"])).total_seconds() / 86400
+            age = (now - opened).total_seconds() / 86400
             open_rows.append({"repo": name, "number": p["number"], "title": p["title"],
                               "author": p["user"]["login"], "age_days": round(age, 1),
                               "updated_at": p["updated_at"]})
