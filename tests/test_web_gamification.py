@@ -92,3 +92,14 @@ def test_goal_and_inbox_zero_via_api(tmp_path, monkeypatch):
         assert client.post("/api/gamification/seen").status_code == 204
         assert client.get("/api/gamification").json()["new_badges"] == []
         assert json.dumps(badges["inbox-zero"])  # serializable for the UI
+
+
+def test_badges_are_dated_when_earned_not_when_computed(tmp_path):
+    db = Database(tmp_path / "t.db")
+    for offset in (5, 4, 3):
+        submit(db, offset)
+    db.grant_achievement("first-review", earned_at="2099-01-01T00:00:00+00:00")  # recorded late
+    g = compute(db, today=TODAY)
+    badges = {b["id"]: b for b in g["badges"]}
+    assert badges["first-review"]["earned_at"] == at(5), "earlier real date replaces the late record"
+    assert badges["streak-3"]["earned_at"] == at(3), "streak badge dated on the day the run hit 3"

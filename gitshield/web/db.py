@@ -421,10 +421,16 @@ class Database:
                 for r in self._exec("SELECT * FROM achievements").fetchall()}
 
     def grant_achievement(self, achievement_id: str, earned_at: Optional[str] = None) -> bool:
-        """Record an achievement once; returns True when it is new."""
-        cur = self._exec("INSERT OR IGNORE INTO achievements (id, earned_at) VALUES (?, ?)",
-                         (achievement_id, earned_at or now()))
-        return bool(cur.rowcount)
+        """Record an achievement once; returns True when it is new. A known earlier date replaces
+        a later one (e.g. a badge first recorded when it was computed rather than when earned)."""
+        when = earned_at or now()
+        row = self._exec("SELECT earned_at FROM achievements WHERE id = ?", (achievement_id,)).fetchone()
+        if row:
+            if earned_at and earned_at < row["earned_at"]:
+                self._exec("UPDATE achievements SET earned_at = ? WHERE id = ?", (earned_at, achievement_id))
+            return False
+        self._exec("INSERT INTO achievements (id, earned_at) VALUES (?, ?)", (achievement_id, when))
+        return True
 
     def mark_achievements_seen(self) -> None:
         self._exec("UPDATE achievements SET seen = 1 WHERE seen = 0")
