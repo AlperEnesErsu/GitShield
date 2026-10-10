@@ -262,6 +262,43 @@ class GitHubClient:
         )
         return resp.json()
 
+    # ---- Checks & Actions (CI diagnosis) -------------------------------------------------
+
+    async def check_runs(self, owner: str, repo: str, sha: str) -> List[Dict[str, Any]]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/commits/{sha}/check-runs",
+                                   params={"per_page": 100})
+        return resp.json().get("check_runs", [])
+
+    async def actions_job(self, owner: str, repo: str, job_id: int) -> Dict[str, Any]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/jobs/{job_id}")
+        return resp.json()
+
+    async def actions_run(self, owner: str, repo: str, run_id: int) -> Dict[str, Any]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/runs/{run_id}")
+        return resp.json()
+
+    async def workflow_runs(self, owner: str, repo: str, workflow_id: int, branch: str,
+                            limit: int = 5) -> List[Dict[str, Any]]:
+        resp = await self._request(
+            "GET", f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",
+            params={"branch": branch, "status": "completed", "per_page": limit})
+        return resp.json().get("workflow_runs", [])
+
+    async def run_jobs(self, owner: str, repo: str, run_id: int) -> List[Dict[str, Any]]:
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
+                                   params={"per_page": 100})
+        return resp.json().get("jobs", [])
+
+    async def job_logs(self, owner: str, repo: str, job_id: int) -> str:
+        """Plain-text log of an Actions job. GitHub answers with a redirect to blob storage;
+        httpx drops the Authorization header when the redirect leaves api.github.com."""
+        resp = await self._request("GET", f"/repos/{owner}/{repo}/actions/jobs/{job_id}/logs",
+                                   follow_redirects=True)
+        return resp.text
+
+    async def rerun_job(self, owner: str, repo: str, job_id: int) -> None:
+        await self._request("POST", f"/repos/{owner}/{repo}/actions/jobs/{job_id}/rerun")
+
     # ---- Contents, branches & PR creation (fix PRs) ----------------------------------
 
     async def get_file(self, owner: str, repo: str, path: str, ref: str) -> Dict[str, Any]:

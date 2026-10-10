@@ -14,6 +14,7 @@ from gitshield.web.db import Database
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.llm import get_provider
 from gitshield.web.automation import AutoReviewer, approve_dependency_batch, build_inbox
+from gitshield.web.ci_diagnosis import diagnose
 from gitshield.web.fixes import FixError, create_fix_pr, preview_fix
 from gitshield.web.insights import pr_insights
 from gitshield.web.metrics import build_metrics
@@ -345,6 +346,36 @@ async def submit(request: Request, review_id: int, body: SubmitBody):
         raise HTTPException(409, f"Review is {review['status']}, not ready")
     result = await submit_review(db(request), gh(request), review, body.event)
     return {"url": result.get("html_url"), "review": db(request).get_review(review_id)}
+
+
+# ---- CI diagnosis --------------------------------------------------------------------------
+
+
+@app.get("/api/repos/{owner}/{repo}/pulls/{number}/ci-diagnosis")
+async def ci_diagnosis(request: Request, owner: str, repo: str, number: int,
+                       refresh: bool = False, ai: bool = False):
+    """Why CI failed on the PR's current head. Cached per commit; `ai=true` adds an LLM deep-dive."""
+    store, client = db(request), gh(request)
+    pr = await client.get_pull(owner, repo, number)
+    full_name = f"{owner}/{repo}"
+    cached = store.get_ci_diagnosis(full_name, number, pr["head"]["sha"])
+    if cached and not refresh and (cached.get("ai") or not ai):
+        # Pending checks may have finished since; recompute until everything is settled.
+        if not cached.get("pending"):
+            return cached
+    provider = get_provider() if ai else None
+    if ai and not provider:
+        raise HTTPException(409, "AI ile derinleştirmek için bir LLM yapılandırılmalı.")
+    result = await diagnose(client, owner, repo, pr, provider)
+    if not result["pending"]:
+        store.save_ci_diagnosis(full_name, number, pr["head"]["sha"], result)
+    return result
+
+
+@app.post("/api/repos/{owner}/{repo}/actions/jobs/{job_id}/rerun", status_code=202)
+async def rerun_ci_job(request: Request, owner: str, repo: str, job_id: int):
+    await gh(request).rerun_job(owner, repo, job_id)
+    return {"rerun": job_id}
 
 
 # ---- Fix PRs ------------------------------------------------------------------------------

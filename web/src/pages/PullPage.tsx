@@ -6,6 +6,7 @@ import { ExternalIcon } from "../components/icons";
 import { NextAction, ProcessStepper } from "../components/Process";
 import { RiskPanel } from "../components/insights";
 import { FixDialog } from "../components/FixDialog";
+import { CiDiagnosisCard } from "../components/CiDiagnosis";
 import {
   Badge,
   ErrorBox,
@@ -135,6 +136,8 @@ export function PullPage() {
       </section>
 
       <RiskPanel risk={p.risk} ci={p.ci} />
+
+      {p.ci === "failure" && <CiDiagnosisCard repo={fullName} number={p.number} headSha={p.head_sha} />}
 
       {review.error && <ErrorBox error={review.error} onRetry={review.reload} />}
 

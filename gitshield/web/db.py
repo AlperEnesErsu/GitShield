@@ -94,6 +94,15 @@ CREATE TABLE IF NOT EXISTS memory (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_repo ON memory(repo);
 
+CREATE TABLE IF NOT EXISTS ci_diagnoses (
+    repo TEXT NOT NULL,
+    pr_number INTEGER NOT NULL,
+    head_sha TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (repo, pr_number, head_sha)
+);
+
 CREATE TABLE IF NOT EXISTS repo_settings (
     repo TEXT PRIMARY KEY,
     auto_review INTEGER NOT NULL DEFAULT 0,
@@ -375,3 +384,16 @@ class Database:
         rows = self._exec("SELECT * FROM reviews WHERE created_at >= ? ORDER BY created_at",
                           (since_iso,)).fetchall()
         return [_review_row(r) for r in rows]
+
+    # ---- CI diagnoses (cached per head commit) ----------------------------------------
+
+    def get_ci_diagnosis(self, repo: str, pr_number: int, head_sha: str) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT result, created_at FROM ci_diagnoses WHERE repo = ? AND pr_number = ?"
+                         " AND head_sha = ?", (repo, pr_number, head_sha)).fetchone()
+        if not row:
+            return None
+        return {**json.loads(row["result"]), "cached_at": row["created_at"]}
+
+    def save_ci_diagnosis(self, repo: str, pr_number: int, head_sha: str, result: Dict[str, Any]) -> None:
+        self._exec("INSERT OR REPLACE INTO ci_diagnoses (repo, pr_number, head_sha, result, created_at)"
+                   " VALUES (?, ?, ?, ?, ?)", (repo, pr_number, head_sha, json.dumps(result), now()))

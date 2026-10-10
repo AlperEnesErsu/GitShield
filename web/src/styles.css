@@ -941,3 +941,37 @@ kbd {
 .fix-diff summary { cursor: pointer; font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
 @media (max-width: 760px) { .fix-grid { grid-template-columns: 1fr; } }
 .notify-bar .notify-msg { flex-basis: 100%; color: var(--text-2); }
+
+/* =====================================================================
+   CI diagnosis
+   ===================================================================== */
+.ci-card {
+  display: flex; flex-direction: column; gap: 14px; padding: 18px 20px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+  border-top: 3px solid var(--critical);
+}
+.ci-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.verdict-environment, .verdict-base { background: var(--low-bg); border-color: transparent; border-left-color: var(--low); }
+.verdict-pr { background: var(--critical-bg); border-color: transparent; border-left-color: var(--critical); }
+.verdict-unknown { background: var(--medium-bg); border-color: transparent; border-left-color: var(--medium); }
+.ci-jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ci-job { padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface-2);
+  display: flex; flex-direction: column; gap: 6px; border-left: 3px solid var(--border-strong); }
+.ci-job.blame-pr { border-left-color: var(--critical); }
+.ci-job.blame-environment { border-left-color: var(--low); }
+.ci-job.blame-base, .ci-job.blame-flaky { border-left-color: var(--medium); }
+.ci-job-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ci-job-name { font-size: 12px; padding: 2px 7px; border-radius: 5px; background: var(--surface-3); }
+.ci-job-title { font-weight: 640; }
+.ci-job-text, .ci-job-fix { margin: 0; font-size: 13px; color: var(--text-2); }
+.ci-evidence {
+  display: block; padding: 6px 9px; border-radius: 6px; background: var(--surface-3); font-size: 12px;
+  overflow-x: auto; white-space: pre;
+}
+.ci-excerpt summary { cursor: pointer; font-size: 12px; color: var(--text-muted); }
+.ci-excerpt .pre { margin-top: 8px; max-height: 280px; overflow: auto; }
+.ci-job-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ci-ai { padding: 12px 14px; border-radius: var(--radius); background: var(--accent-soft); display: flex; flex-direction: column; gap: 6px; }
+.ci-ai p { margin: 0; }
+.ci-ai-head { display: flex; align-items: center; gap: 8px; }
+.ci-steps { margin: 0; padding-left: 20px; font-size: 13px; }

@@ -354,6 +354,40 @@ export interface Metrics {
   };
 }
 
+export type CiBlame = "pr" | "environment" | "base" | "flaky" | "unknown";
+
+export interface CiJob {
+  name: string;
+  id: number;
+  url: string | null;
+  conclusion: string;
+  is_actions: boolean;
+  pattern?: string | null;
+  blame: CiBlame;
+  blame_label: string;
+  title: string;
+  explanation: string;
+  suggestion: string;
+  evidence?: string;
+  excerpt?: string;
+  base?: { conclusion: string | null; run_url?: string; at?: string; event?: string; error?: string };
+  audit?: { packages: string[]; touched_by_pr: string[] };
+}
+
+export interface CiDiagnosis {
+  head_sha: string;
+  base: string;
+  actor: string;
+  total_checks: number;
+  failed: number;
+  passing: number;
+  pending: number;
+  jobs: CiJob[];
+  verdict: { blame: CiBlame | "none"; text: string };
+  ai: { summary: string; cause: string; blame: CiBlame; fix_steps: string[]; confidence: string } | null;
+  cached_at?: string;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -383,6 +417,10 @@ const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
   inbox: () => request<Inbox>("GET", "/inbox"),
+  ciDiagnosis: (repo: string, n: number, opts: { refresh?: boolean; ai?: boolean } = {}) =>
+    request<CiDiagnosis>("GET", `${repoPath(repo)}/pulls/${n}/ci-diagnosis?refresh=${!!opts.refresh}&ai=${!!opts.ai}`),
+  rerunJob: (repo: string, jobId: number) =>
+    request<{ rerun: number }>("POST", `${repoPath(repo)}/actions/jobs/${jobId}/rerun`),
   metrics: (days: number, slaDays: number) => request<Metrics>("GET", `/metrics?days=${days}&sla_days=${slaDays}`),
   notifications: () => request<{ channels: string[]; app_url: string }>("GET", "/notifications"),
   testNotification: () => request<{ results: Record<string, string> }>("POST", "/notifications/test"),
