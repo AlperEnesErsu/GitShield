@@ -40,6 +40,30 @@ def _parse_json(text: str, schema: Type[T]) -> T:
         raise LLMError(f"Model returned JSON that does not match the schema: {e}") from e
 
 
+def http_error_message(vendor: str, model: str, resp: httpx.Response) -> str:
+    """Readable, actionable text for the common provider failures; raw detail otherwise."""
+    try:
+        detail = resp.json().get("error", {}).get("message", "")
+    except ValueError:
+        detail = resp.text
+    first_line = (detail or resp.text).strip().splitlines()[0][:200] if (detail or resp.text).strip() else ""
+    code = resp.status_code
+    if code == 429:
+        retry = re.search(r"retry in ([\d.]+)s", detail or "", re.I)
+        wait = f" ~{round(float(retry.group(1)))} sn sonra tekrar dene." if retry else " Biraz bekleyip tekrar dene."
+        hint = ""
+        if vendor == "Gemini" and "free_tier" in (detail or "") and "pro" in model:
+            hint = " Ücretsiz katmanda Pro modellerin kotası yok; LLM_MODEL=gemini-flash-latest kullan."
+        return f"{vendor} kotası ya da hız limiti doldu ({model}).{wait}{hint}"
+    if code in (401, 403):
+        return f"{vendor} API anahtarı geçersiz ya da bu modele erişimi yok ({model}). .env'deki anahtarı kontrol et."
+    if code == 404:
+        return f"{vendor} modeli bulunamadı ya da kullanımdan kalktı: {model}. LLM_MODEL ile başka bir model seç."
+    if code >= 500:
+        return f"{vendor} şu an yanıt vermiyor ({code}); birazdan tekrar dene."
+    return f"{vendor} API hatası ({code}): {first_line}"
+
+
 def _schema_instruction(schema: Type[BaseModel]) -> str:
     return (
         "\n\nRespond with a single JSON object (no prose, no code fence) that matches this "
@@ -106,7 +130,7 @@ class GeminiProvider:
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(url, json=payload, headers={"x-goog-api-key": self._key})
         if resp.status_code != 200:
-            raise LLMError(f"Gemini API error ({resp.status_code}): {resp.text[:300]}")
+            raise LLMError(http_error_message("Gemini", self.model, resp))
         try:
             text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError) as e:
@@ -137,7 +161,7 @@ class OpenAIProvider:
                 headers={"Authorization": f"Bearer {self._key}"},
             )
         if resp.status_code != 200:
-            raise LLMError(f"OpenAI API error ({resp.status_code}): {resp.text[:300]}")
+            raise LLMError(http_error_message("OpenAI", self.model, resp))
         try:
             text = resp.json()["choices"][0]["message"]["content"]
         except (KeyError, IndexError) as e:

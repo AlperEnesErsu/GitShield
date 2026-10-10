@@ -153,7 +153,7 @@ function ItemRow({ item, onStart, starting }: {
       <div className="inbox-meta">
         {item.draft && <Badge tone="muted">taslak</Badge>}
         <RiskBadge risk={item.risk} />
-        <CiBadge ci={item.ci} compact />
+        <CiBadge ci={item.ci} blame={item.ci_blame} compact />
         {item.kind === "approve" && item.verdict && <VerdictBadge verdict={item.verdict} />}
         {item.kind === "approve" && !!item.open_comments && <span className="muted small">{item.open_comments} yorum</span>}
         <span className="muted small nowrap" title="Son güncelleme">{timeAgo(item.updated_at)}</span>

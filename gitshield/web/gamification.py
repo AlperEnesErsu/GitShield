@@ -73,6 +73,23 @@ def streaks(days_with_reviews: List[date], today: date) -> Dict[str, int]:
     return {"current": current, "best": best}
 
 
+def streak_timeline(manual: List[Dict[str, Any]]) -> List[str]:
+    """Element n-1 is the first review of the day a streak first reached n days."""
+    first_of_day: Dict[date, str] = {}
+    for r in manual:
+        d = local_day(r["submitted_at"])
+        if d and (d not in first_of_day or r["submitted_at"] < first_of_day[d]):
+            first_of_day[d] = r["submitted_at"]
+    reached: List[str] = []
+    run, prev = 0, None
+    for d in sorted(first_of_day):
+        run = run + 1 if prev and d - prev == timedelta(days=1) else 1
+        if run > len(reached):
+            reached.append(first_of_day[d])
+        prev = d
+    return reached
+
+
 @dataclass
 class Badge:
     id: str
@@ -82,31 +99,33 @@ class Badge:
     target: int
     metric: Callable[[Dict[str, Any]], int]
     tier: str = "bronze"
+    # Key into the timelines dict: when the target was reached is timeline[target - 1].
+    timeline: Optional[str] = None
 
 
 BADGES: List[Badge] = [
-    Badge("first-review", "İlk Kan", "İlk review'unu GitHub'a gönder.", "🛡️", 1, lambda s: s["reviews"]),
-    Badge("ten-reviews", "Düzenli Bekçi", "10 review gönder.", "🏅", 10, lambda s: s["reviews"], "silver"),
-    Badge("fifty-reviews", "Kale Komutanı", "50 review gönder.", "🏰", 50, lambda s: s["reviews"], "gold"),
+    Badge("first-review", "İlk Kan", "İlk review'unu GitHub'a gönder.", "🛡️", 1, lambda s: s["reviews"], timeline="reviews"),
+    Badge("ten-reviews", "Düzenli Bekçi", "10 review gönder.", "🏅", 10, lambda s: s["reviews"], "silver", timeline="reviews"),
+    Badge("fifty-reviews", "Kale Komutanı", "50 review gönder.", "🏰", 50, lambda s: s["reviews"], "gold", timeline="reviews"),
     Badge("bug-hunter", "Böcek Avcısı", "Gönderilen review'larda toplam 10 sorun yakala.", "🐞", 10,
-          lambda s: s["findings"], "silver"),
+          lambda s: s["findings"], "silver", timeline="findings"),
     Badge("critical-catch", "Kritik Yakalayan", "Kritik önemde bir sorunu yakalayıp gönder.", "🚨", 1,
-          lambda s: s["critical_reviews"], "gold"),
+          lambda s: s["critical_reviews"], "gold", timeline="critical_reviews"),
     Badge("lightning", "Şimşek", f"Hazır olan bir review'u {FAST_APPROVAL_MIN} dakika içinde gönder.", "⚡", 1,
-          lambda s: s["fast_approvals"]),
+          lambda s: s["fast_approvals"], timeline="fast_approvals"),
     Badge("dependency-keeper", "Bağımlılık Bekçisi", "10 bağımlılık güncellemesini toplu onayla.", "📦", 10,
-          lambda s: s["batch_approvals"], "silver"),
+          lambda s: s["batch_approvals"], "silver", timeline="batch_approvals"),
     Badge("fixer", "Tamirci", "Bir yorumdan düzeltme PR'ı aç.", "🔧", 1, lambda s: s["fix_prs"]),
-    Badge("issue-opener", "Kayıt Tutucu", "3 taslak issue'yu GitHub'da aç.", "📌", 3, lambda s: s["issues_opened"]),
+    Badge("issue-opener", "Kayıt Tutucu", "3 taslak issue'yu GitHub'da aç.", "📌", 3, lambda s: s["issues_opened"], timeline="issues_opened"),
     Badge("memory-master", "Hafıza Ustası", "Repo hafızasına 5 kural ya da susturma ekle.", "🧠", 5,
-          lambda s: s["memory_items"], "silver"),
-    Badge("ci-detective", "CI Dedektifi", "5 PR'ın CI hatasını teşhis et.", "🔍", 5, lambda s: s["ci_diagnoses"]),
+          lambda s: s["memory_items"], "silver", timeline="memory_items"),
+    Badge("ci-detective", "CI Dedektifi", "5 PR'ın CI hatasını teşhis et.", "🔍", 5, lambda s: s["ci_diagnoses"], timeline="ci_diagnoses"),
     Badge("inbox-zero", "Inbox Zero", "Bekleyenler kutusunu tamamen boşalt.", "✨", 1, lambda s: s["inbox_zero"], "gold"),
-    Badge("streak-3", "Isınma Turu", "3 gün üst üste review gönder.", "🔥", 3, lambda s: s["best_streak"]),
-    Badge("streak-7", "Haftalık Seri", "7 gün üst üste review gönder.", "🔥", 7, lambda s: s["best_streak"], "silver"),
-    Badge("streak-30", "Durdurulamaz", "30 gün üst üste review gönder.", "☄️", 30, lambda s: s["best_streak"], "gold"),
+    Badge("streak-3", "Isınma Turu", "3 gün üst üste review gönder.", "🔥", 3, lambda s: s["best_streak"], timeline="streak"),
+    Badge("streak-7", "Haftalık Seri", "7 gün üst üste review gönder.", "🔥", 7, lambda s: s["best_streak"], "silver", timeline="streak"),
+    Badge("streak-30", "Durdurulamaz", "30 gün üst üste review gönder.", "☄️", 30, lambda s: s["best_streak"], "gold", timeline="streak"),
     Badge("night-owl", "Gece Kuşu", "Gece yarısı ile 05:00 arasında bir review gönder.", "🦉", 1,
-          lambda s: s["night_reviews"]),
+          lambda s: s["night_reviews"], timeline="night_reviews"),
 ]
 
 
@@ -160,6 +179,24 @@ def compute(db: Database, today: Optional[date] = None) -> Dict[str, Any]:
         "night_reviews": sum(1 for r in manual if datetime.fromisoformat(r["submitted_at"]).astimezone().hour < 5),
     }
 
+    def stamps(rows: List[Dict[str, Any]], key: str) -> List[str]:
+        return sorted(r[key] for r in rows if r.get(key))
+
+    timelines: Dict[str, List[str]] = {
+        "reviews": [r["submitted_at"] for r in manual],
+        "findings": [r["submitted_at"] for r in manual for _ in range(r["included"])],
+        "critical_reviews": [r["submitted_at"] for r in manual if r["critical"]],
+        "fast_approvals": [r["submitted_at"] for r in manual if r["approval_minutes"] is not None
+                           and r["approval_minutes"] <= FAST_APPROVAL_MIN],
+        "batch_approvals": [r["submitted_at"] for r in reviews if r["origin"] == "batch"],
+        "night_reviews": [r["submitted_at"] for r in manual
+                          if datetime.fromisoformat(r["submitted_at"]).astimezone().hour < 5],
+        "issues_opened": stamps(db.query("SELECT updated_at FROM draft_issues WHERE status = 'opened'"), "updated_at"),
+        "memory_items": stamps(db.query("SELECT created_at FROM memory"), "created_at"),
+        "ci_diagnoses": stamps(db.query("SELECT created_at FROM ci_diagnoses"), "created_at"),
+        "streak": streak_timeline(manual),
+    }
+
     xp = sum(review_xp(r) for r in reviews) + 15 * fix_prs + 8 * issues + 2 * memory + 2 * ci
     goal = int(db.get_setting("daily_goal", str(DEFAULT_DAILY_GOAL)) or DEFAULT_DAILY_GOAL)
     per_day: Dict[date, int] = {}
@@ -172,7 +209,9 @@ def compute(db: Database, today: Optional[date] = None) -> Dict[str, Any]:
     for b in BADGES:
         value = b.metric(stats)
         earned = value >= b.target
-        if earned and db.grant_achievement(b.id):
+        line = timelines.get(b.timeline or "", [])
+        when = line[b.target - 1] if len(line) >= b.target else None
+        if earned and db.grant_achievement(b.id, when):
             new.append(b.id)
         record = db.achievements().get(b.id) if earned else None
         badges.append({

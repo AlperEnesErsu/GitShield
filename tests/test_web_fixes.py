@@ -92,3 +92,23 @@ def test_fork_prs_cannot_get_fix_branches(tmp_path):
     with pytest.raises(FixError):
         asyncio.run(create_fix_pr(db, gh, comment, 3, 3, "x"))
     assert not any(c[0] in ("branch", "update", "pull") for c in gh.calls)
+
+
+@pytest.mark.parametrize("path", ["../../user", "/etc/passwd", "a/../b", "a//b", "a\\b", "a?x=1", "a#b", "a%2e%2e/b", ""])
+def test_unsafe_paths_are_refused(tmp_path, path):
+    from gitshield.web.fixes import safe_repo_path
+
+    with pytest.raises(FixError):
+        safe_repo_path(path)
+
+
+def test_hostile_comment_path_never_reaches_github(tmp_path):
+    db = Database(tmp_path / "t.db")
+    gh = FixGitHub()
+    comment = _comment(db)
+    comment["path"] = "../../../user/repos"
+    with pytest.raises(FixError):
+        asyncio.run(preview_fix(db, gh, FixProvider(), comment))
+    with pytest.raises(FixError):
+        asyncio.run(create_fix_pr(db, gh, comment, 3, 3, "x"))
+    assert not any(c[0] in ("get_file", "branch", "update", "pull") for c in gh.calls)

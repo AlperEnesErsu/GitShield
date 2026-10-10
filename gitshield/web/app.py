@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -20,6 +20,7 @@ from gitshield.web.fixes import FixError, create_fix_pr, preview_fix
 from gitshield.web.insights import pr_insights
 from gitshield.web.metrics import build_metrics
 from gitshield.web.notify import app_url, channels as notify_channels, send as send_notification
+from gitshield.web.security import LocalOnlyMiddleware
 from gitshield.web.review import begin_review, comment_to_issue, run_review, submit_review
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -31,6 +32,7 @@ _tasks: Set[asyncio.Task] = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.db = Database(settings.db_path)
+    app.state.db.fail_interrupted_reviews()
     app.state.gh = GitHubClient()
     app.state.watcher = AutoReviewer(app.state.db, app.state.gh, settings.auto_review_interval)
     app.state.watcher.start()
@@ -40,6 +42,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="GitShield", version=__version__, lifespan=lifespan)
+app.add_middleware(LocalOnlyMiddleware)
 
 
 @app.exception_handler(GitHubError)
@@ -183,7 +186,8 @@ async def list_pulls(request: Request, owner: str, repo: str, state: str = "open
     for p in pulls:
         review = latest.get(p["number"])
         result.append({
-            **pr_insights(details.get(p["number"]), review),
+            **pr_insights(details.get(p["number"]), review,
+                          db(request).ci_verdict(f"{owner}/{repo}", p["number"], p["head"]["sha"])),
             "number": p["number"],
             "title": p["title"],
             "url": p["html_url"],
@@ -242,7 +246,8 @@ async def get_pull(request: Request, owner: str, repo: str, number: int):
         client.open_pulls_detail(owner, repo),
     )
     reviews = db(request).list_pr_reviews(f"{owner}/{repo}", number)
-    insights = pr_insights(details.get(number), db(request).latest_reviews(f"{owner}/{repo}").get(number))
+    insights = pr_insights(details.get(number), db(request).latest_reviews(f"{owner}/{repo}").get(number),
+                           db(request).ci_verdict(f"{owner}/{repo}", number, pr["head"]["sha"]))
     latest = db(request).get_review(reviews[0]["id"]) if reviews else None
     return {
         "number": pr["number"],
@@ -275,6 +280,10 @@ async def get_pull(request: Request, owner: str, repo: str, number: int):
 
 @app.post("/api/repos/{owner}/{repo}/pulls/{number}/reviews", status_code=202)
 async def start_review(request: Request, owner: str, repo: str, number: int, full: bool = False):
+    running = db(request).running_review(f"{owner}/{repo}", number)
+    if running:
+        # A double click or the watcher already started one: do not burn LLM quota twice.
+        return {"id": running["id"], "status": "running", "existing": True}
     client = gh(request)
     pr = await client.get_pull(owner, repo, number)
     provider = get_provider()
@@ -394,7 +403,7 @@ async def ci_diagnosis(request: Request, owner: str, repo: str, number: int,
         raise HTTPException(409, "AI ile derinleştirmek için bir LLM yapılandırılmalı.")
     result = await diagnose(client, owner, repo, pr, provider)
     if not result["pending"]:
-        store.save_ci_diagnosis(full_name, number, pr["head"]["sha"], result)
+        store.save_ci_diagnosis(full_name, number, pr["head"]["sha"], result)  # also feeds risk
     return result
 
 
@@ -634,3 +643,20 @@ if FRONTEND_DIST.exists():
             return FileResponse(candidate)
         # index.html references hashed assets; never cache it so new builds load immediately.
         return FileResponse(FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-cache"})
+else:
+    SETUP_PAGE = """<!doctype html><html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>GitShield · kurulum</title>
+<style>body{font:15px/1.6 system-ui,sans-serif;max-width:620px;margin:12vh auto;padding:0 20px;color:#17171c;background:#f6f6f3}
+code,pre{font-family:ui-monospace,Consolas,monospace;background:#fff;border:1px solid #e8e7e2;border-radius:8px}
+pre{padding:12px 14px}code{padding:1px 6px}h1{font-size:22px}</style></head><body>
+<h1>🛡️ GitShield arayüzü henüz derlenmemiş</h1>
+<p>API çalışıyor (<a href="/api/status">/api/status</a>) ama <code>web/dist</code> bulunamadı. Arayüzü bir kez derle:</p>
+<pre>cd web
+npm install
+npm run build</pre>
+<p>Ardından <code>gitshield web</code>'i yeniden başlat. Geliştirme için <code>npm run dev</code> ile
+<a href="http://localhost:5173">localhost:5173</a> da kullanılabilir.</p></body></html>"""
+
+    @app.get("/", include_in_schema=False)
+    async def setup_page():
+        return HTMLResponse(SETUP_PAGE, status_code=503)

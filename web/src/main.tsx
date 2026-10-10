@@ -9,6 +9,7 @@ import { InboxPage } from "./pages/InboxPage";
 import { TriagePage } from "./pages/TriagePage";
 import { MetricsPage } from "./pages/MetricsPage";
 import { AchievementsPage } from "./pages/AchievementsPage";
+import { NotFoundPage } from "./components/ErrorBoundary";
 import "@fontsource-variable/inter";
 import "./styles.css";
 
@@ -24,6 +25,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="achievements" element={<AchievementsPage />} />
           <Route path="r/:owner/:repo" element={<RepoPage />} />
           <Route path="r/:owner/:repo/pull/:number" element={<PullPage />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

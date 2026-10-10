@@ -116,10 +116,19 @@ export function ErrorBox({ error, onRetry }: { error: string; onRetry?: () => vo
   );
 }
 
-export function Loading({ label = "Yükleniyor" }: { label?: string }) {
+const SKELETON_WIDTHS = [92, 76, 84, 64, 88, 70];
+
+/** Shimmering placeholder rows shaped like a list, with the label kept for screen readers. */
+export function Loading({ label = "Yükleniyor", rows = 4 }: { label?: string; rows?: number }) {
   return (
-    <div className="loading">
-      <span className="spinner" /> {label}…
+    <div className="skeleton" role="status" aria-live="polite">
+      <div className="skeleton-label"><span className="spinner" /> {label}…</div>
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="skeleton-row">
+          <span className="sk sk-avatar" />
+          <span className="sk sk-line" style={{ width: `${SKELETON_WIDTHS[i % SKELETON_WIDTHS.length]}%` }} />
+        </div>
+      ))}
     </div>
   );
 }

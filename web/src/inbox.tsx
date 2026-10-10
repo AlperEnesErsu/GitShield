@@ -31,9 +31,25 @@ export function InboxProvider({ children }: { children: ReactNode }) {
   const [desktopNotify, setPref] = useState(readPref);
   const seen = useRef<Set<string> | null>(null);
 
+  // Each refresh queries GitHub for every active repo, so skip it while the tab is hidden
+  // (saves API rate limit) and catch up as soon as the user comes back.
+  const lastFetch = useRef(Date.now());
   useEffect(() => {
-    const t = setInterval(reload, REFRESH_MS);
-    return () => clearInterval(t);
+    const refresh = () => {
+      lastFetch.current = Date.now();
+      reload();
+    };
+    const t = setInterval(() => {
+      if (!document.hidden) refresh();
+    }, REFRESH_MS);
+    const onVisible = () => {
+      if (!document.hidden && Date.now() - lastFetch.current >= REFRESH_MS) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [reload]);
 
   useEffect(() => {

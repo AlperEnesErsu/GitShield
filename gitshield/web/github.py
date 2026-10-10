@@ -1,6 +1,6 @@
 import base64
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
 
@@ -83,6 +83,7 @@ query($owner: String!, $name: String!) {
 MAX_REPO_PAGES = 10
 MAX_PR_FILES = 300
 REPO_CACHE_TTL_SEC = 60
+READ_TTL_SEC = 30
 
 OPEN_PULLS_DETAIL_QUERY = """
 query($owner: String!, $name: String!) {
@@ -115,6 +116,21 @@ query($owner: String!, $name: String!) {
 """
 
 
+def rate_limit_message(resp: httpx.Response) -> Optional[str]:
+    """A readable message when GitHub refused the request because of a rate limit, else None."""
+    if resp.status_code not in (403, 429):
+        return None
+    if resp.headers.get("x-ratelimit-remaining") == "0":
+        reset = resp.headers.get("x-ratelimit-reset")
+        when = time.strftime("%H:%M", time.localtime(int(reset))) if reset and reset.isdigit() else "kısa süre sonra"
+        return f"GitHub API limiti doldu; {when} itibarıyla sıfırlanır. O zamana kadar sayfaları yenilemeyi azalt."
+    retry = resp.headers.get("retry-after")
+    if retry or "secondary rate limit" in resp.text.lower():
+        wait = f"{retry} sn" if retry else "bir süre"
+        return f"GitHub çok sık istek yapıldığını bildirdi (ikincil limit); {wait} bekleyip tekrar dene."
+    return None
+
+
 class GitHubError(Exception):
     def __init__(self, status_code: int, message: str):
         super().__init__(message)
@@ -137,6 +153,21 @@ class GitHubClient:
             },
         )
         self._repo_cache: Optional[tuple[float, Dict[str, Any]]] = None
+        # Short-lived cache for reads that several pages repeat (inbox, repo page, metrics).
+        self._read_cache: Dict[tuple, tuple[float, Any]] = {}
+
+    async def _cached(self, key: tuple, ttl: float, load: Callable[[], Awaitable[Any]]) -> Any:
+        hit = self._read_cache.get(key)
+        if hit and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+        value = await load()
+        self._read_cache[key] = (time.monotonic(), value)
+        return value
+
+    def invalidate(self, owner: str, repo: str) -> None:
+        """Drop cached reads of one repository (after GitShield itself changed something there)."""
+        for key in [k for k in self._read_cache if k[1:3] == (owner, repo)]:
+            del self._read_cache[key]
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -145,6 +176,9 @@ class GitHubClient:
         if not self.token:
             raise GitHubError(401, "GITHUB_TOKEN is not configured.")
         resp = await self._client.request(method, path, **kwargs)
+        limited = rate_limit_message(resp)
+        if limited:
+            raise GitHubError(429, limited)
         if resp.status_code >= 400:
             try:
                 detail = resp.json().get("message", resp.text)
@@ -209,12 +243,14 @@ class GitHubClient:
 
     async def open_pulls_detail(self, owner: str, repo: str) -> Dict[int, Dict[str, Any]]:
         """Size, files, author association and CI rollup for every open PR, keyed by number."""
-        data = await self._graphql(OPEN_PULLS_DETAIL_QUERY, {"owner": owner, "name": repo})
+        data = await self._cached(("detail", owner, repo), READ_TTL_SEC, lambda: self._graphql(
+            OPEN_PULLS_DETAIL_QUERY, {"owner": owner, "name": repo}))
         nodes = ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
         return {n["number"]: n for n in nodes}
 
     async def merged_pulls(self, owner: str, repo: str) -> List[Dict[str, Any]]:
-        data = await self._graphql(MERGED_PULLS_QUERY, {"owner": owner, "name": repo})
+        data = await self._cached(("merged", owner, repo), READ_TTL_SEC, lambda: self._graphql(
+            MERGED_PULLS_QUERY, {"owner": owner, "name": repo}))
         return ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
 
     async def participation(self, owner: str, repo: str) -> Optional[Dict[str, List[int]]]:
@@ -227,9 +263,8 @@ class GitHubClient:
     # ---- Pull requests ---------------------------------------------------------
 
     async def list_pulls(self, owner: str, repo: str, state: str = "open") -> List[Dict[str, Any]]:
-        return await self._paginate(
-            f"/repos/{owner}/{repo}/pulls", {"state": state, "sort": "updated", "direction": "desc"}, 3
-        )
+        return await self._cached(("pulls", owner, repo, state), READ_TTL_SEC, lambda: self._paginate(
+            f"/repos/{owner}/{repo}/pulls", {"state": state, "sort": "updated", "direction": "desc"}, 3))
 
     async def get_pull(self, owner: str, repo: str, number: int) -> Dict[str, Any]:
         resp = await self._request("GET", f"/repos/{owner}/{repo}/pulls/{number}")
@@ -260,6 +295,7 @@ class GitHubClient:
             f"/repos/{owner}/{repo}/pulls/{number}/reviews",
             json={"commit_id": commit_id, "body": body, "event": event, "comments": comments},
         )
+        self.invalidate(owner, repo)
         return resp.json()
 
     # ---- Checks & Actions (CI diagnosis) -------------------------------------------------
@@ -298,6 +334,7 @@ class GitHubClient:
 
     async def rerun_job(self, owner: str, repo: str, job_id: int) -> None:
         await self._request("POST", f"/repos/{owner}/{repo}/actions/jobs/{job_id}/rerun")
+        self.invalidate(owner, repo)
 
     # ---- Contents, branches & PR creation (fix PRs) ----------------------------------
 
@@ -326,6 +363,7 @@ class GitHubClient:
                           body: str) -> Dict[str, Any]:
         resp = await self._request("POST", f"/repos/{owner}/{repo}/pulls",
                                    json={"title": title, "head": head, "base": base, "body": body})
+        self.invalidate(owner, repo)
         return resp.json()
 
     # ---- Issues ----------------------------------------------------------------

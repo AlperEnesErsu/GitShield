@@ -421,10 +421,16 @@ class Database:
                 for r in self._exec("SELECT * FROM achievements").fetchall()}
 
     def grant_achievement(self, achievement_id: str, earned_at: Optional[str] = None) -> bool:
-        """Record an achievement once; returns True when it is new."""
-        cur = self._exec("INSERT OR IGNORE INTO achievements (id, earned_at) VALUES (?, ?)",
-                         (achievement_id, earned_at or now()))
-        return bool(cur.rowcount)
+        """Record an achievement once; returns True when it is new. A known earlier date replaces
+        a later one (e.g. a badge first recorded when it was computed rather than when earned)."""
+        when = earned_at or now()
+        row = self._exec("SELECT earned_at FROM achievements WHERE id = ?", (achievement_id,)).fetchone()
+        if row:
+            if earned_at and earned_at < row["earned_at"]:
+                self._exec("UPDATE achievements SET earned_at = ? WHERE id = ?", (earned_at, achievement_id))
+            return False
+        self._exec("INSERT INTO achievements (id, earned_at) VALUES (?, ?)", (achievement_id, when))
+        return True
 
     def mark_achievements_seen(self) -> None:
         self._exec("UPDATE achievements SET seen = 1 WHERE seen = 0")
@@ -436,3 +442,28 @@ class Database:
     def set_setting(self, key: str, value: str) -> None:
         self._exec("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE"
                    " SET value = excluded.value", (key, value))
+
+    def fail_interrupted_reviews(self) -> int:
+        """Reviews still 'running' at startup were cut off by a shutdown; mark them failed so the
+        UI stops spinning and they can be retried."""
+        message = "Sunucu yeniden başlatıldığı için inceleme yarıda kaldı; yeniden başlat."
+        rows = self._exec("SELECT id, progress FROM reviews WHERE status = 'running'").fetchall()
+        for row in rows:
+            steps = json.loads(row["progress"] or "[]")
+            for step in steps:
+                if step["status"] == "running":
+                    step.update(status="failed", detail=message, finished_at=now())
+            self.update_review(row["id"], status="failed", error=message, progress=steps)
+        return len(rows)
+
+    def running_review(self, repo: str, pr_number: int) -> Optional[Dict[str, Any]]:
+        row = self._exec("SELECT id FROM reviews WHERE repo = ? AND pr_number = ? AND status = 'running'"
+                         " ORDER BY id DESC LIMIT 1", (repo, pr_number)).fetchone()
+        return self.get_review(row["id"]) if row else None
+
+    def ci_verdict(self, repo: str, pr_number: int, head_sha: Optional[str]) -> Optional[str]:
+        """Blame from a cached CI diagnosis of this exact commit (pr / environment / base / ...)."""
+        if not head_sha:
+            return None
+        cached = self.get_ci_diagnosis(repo, pr_number, head_sha)
+        return (cached or {}).get("verdict", {}).get("blame")

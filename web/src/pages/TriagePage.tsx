@@ -4,6 +4,7 @@ import { api, InboxItem, Review, Verdict } from "../api";
 import { ProcessStepper } from "../components/Process";
 import { ErrorBox, Loading, SeverityBadge, VerdictBadge, VerificationBadge, verdictLabel } from "../components/ui";
 import { useInbox } from "../inbox";
+import { useGamification } from "../gamification";
 
 const KEYS: [string, string][] = [
   ["j / k", "Sonraki / önceki yorum"],
@@ -26,6 +27,10 @@ function isTyping(e: KeyboardEvent) {
 
 export function TriagePage() {
   const inbox = useInbox();
+  const { data: progress } = useGamification();
+  // XP when the session started, to show what this run earned.
+  const startXp = useRef<number | null>(null);
+  if (startXp.current === null && progress) startXp.current = progress.xp;
   // Freeze the queue when the page opens so submitting does not reshuffle it under the user.
   const [queue, setQueue] = useState<InboxItem[] | null>(null);
   useEffect(() => {
@@ -63,7 +68,11 @@ export function TriagePage() {
         </div>
       )}
 
-      {!item ? (
+      {queue.length > 0 && remaining === 0 ? (
+        <QueueCleared count={queue.length} done={done}
+                      xp={progress && startXp.current !== null ? progress.xp - startXp.current : null}
+                      streak={progress?.streak.current ?? null} />
+      ) : !item ? (
         <div className="empty big">
           {queue.length ? "Tüm review'lar işlendi." : "Onayını bekleyen review yok."}{" "}
           <Link to="/inbox">Bekleyenlere dön</Link>
@@ -258,6 +267,39 @@ function TriageCard({ item, position, sent, onSent, onNext, onPrev }: {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function QueueCleared({ count, done, xp, streak }: {
+  count: number;
+  done: Record<number, string>;
+  xp: number | null;
+  streak: number | null;
+}) {
+  const verdicts = Object.values(done).reduce<Record<string, number>>((acc, v) => {
+    acc[v] = (acc[v] ?? 0) + 1;
+    return acc;
+  }, {});
+  return (
+    <div className="cleared">
+      <div className="confetti big" aria-hidden>
+        {Array.from({ length: 28 }, (_, i) => <span key={i} style={{ ["--i" as string]: i }} />)}
+      </div>
+      <div className="cleared-art" aria-hidden>🏁</div>
+      <h2>Kuyruk temizlendi!</h2>
+      <p className="muted">{count} review'u bitirdin. Bekleyenler kutun bir adım daha hafifledi.</p>
+      <div className="cleared-stats">
+        {Object.entries(verdicts).map(([label, n]) => (
+          <div key={label}><strong>{n}</strong><span>{label}</span></div>
+        ))}
+        {xp !== null && <div className="xp"><strong>+{xp}</strong><span>XP</span></div>}
+        {streak !== null && <div className="streak"><strong>🔥 {streak}</strong><span>günlük seri</span></div>}
+      </div>
+      <div className="head-actions">
+        <Link to="/inbox" className="btn btn-primary">Bekleyenlere dön</Link>
+        <Link to="/achievements" className="btn">Başarılarım</Link>
+      </div>
     </div>
   );
 }

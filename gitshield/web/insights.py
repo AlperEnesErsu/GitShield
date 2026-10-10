@@ -71,7 +71,8 @@ def parse_dependency_update(title: str, author: str) -> Optional[Dict[str, Any]]
             "bot": author in BOT_AUTHORS}
 
 
-def compute_risk(pr: Dict[str, Any], review: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def compute_risk(pr: Dict[str, Any], review: Optional[Dict[str, Any]] = None,
+                 ci_blame: Optional[str] = None) -> Dict[str, Any]:
     """Score 0-100 with the factors that produced it.
 
     ``pr`` is a GraphQL pull request node: additions, deletions, changedFiles,
@@ -124,7 +125,11 @@ def compute_risk(pr: Dict[str, Any], review: Optional[Dict[str, Any]] = None) ->
 
     ci = pr_ci_state(pr)
     if ci == "failure":
-        add("CI başarısız", 20)
+        # A CI diagnosis that blamed the environment or the base branch says little about this PR.
+        if ci_blame in ("environment", "base"):
+            add("CI başarısız (teşhis: PR'ın suçu değil)", 5)
+        else:
+            add("CI başarısız", 20)
 
     if review and review.get("status") in ("ready", "submitted"):
         critical, high = review.get("critical_findings", 0), review.get("high_findings", 0)
@@ -151,12 +156,20 @@ def ci_state(rollup: Optional[str]) -> str:
             "PENDING": "pending", "EXPECTED": "pending"}.get(rollup or "", "none")
 
 
-def pr_insights(node: Optional[Dict[str, Any]], review: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Risk, CI state and dependency info for one PR; empty values when GitHub returned no detail."""
+def head_oid(node: Optional[Dict[str, Any]]) -> Optional[str]:
+    commits = ((node or {}).get("commits") or {}).get("nodes") or []
+    return commits[-1]["commit"].get("oid") if commits else None
+
+
+def pr_insights(node: Optional[Dict[str, Any]], review: Optional[Dict[str, Any]] = None,
+                ci_blame: Optional[str] = None) -> Dict[str, Any]:
+    """Risk, CI state and dependency info for one PR; empty values when GitHub returned no detail.
+    ``ci_blame`` is the verdict of a cached CI diagnosis for the PR's head commit, if any."""
     if not node:
-        return {"risk": None, "ci": "none", "dependency": None}
+        return {"risk": None, "ci": "none", "dependency": None, "ci_blame": None}
     return {
-        "risk": compute_risk(node, review),
+        "risk": compute_risk(node, review, ci_blame),
         "ci": pr_ci_state(node),
+        "ci_blame": ci_blame if pr_ci_state(node) == "failure" else None,
         "dependency": parse_dependency_update(node.get("title", ""), (node.get("author") or {}).get("login", "")),
     }
