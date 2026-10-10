@@ -15,6 +15,7 @@ import { Column, DataTable } from "../components/DataTable";
 import { DraftIcon, IssueIcon, LockIcon, PullIcon, RefreshIcon, RepoIcon, SearchIcon } from "../components/icons";
 import { Badge, ErrorBox, Loading } from "../components/ui";
 import { timeAgo, useAsync } from "../hooks";
+import { TodayPanel } from "../components/TodayPanel";
 
 export const OTHER_COLOR = "var(--chart-other)";
 export const langColor = (l: { color: string | null }) => l.color ?? OTHER_COLOR;
@@ -203,14 +204,15 @@ export function ReposPage() {
 
   return (
     <div className="page">
-      <div className="page-head">
+      <TodayPanel login={login} />
+
+      <div className="section-head">
         <div>
-          <p className="eyebrow">Genel bakış</p>
-          <h1>{login ? `Merhaba, ${login}` : "Repolar"}</h1>
-          <p className="muted">Erişimin olan tüm repolar, açık iş yükü ve GitShield bulguları tek ekranda.</p>
+          <h2>Repolar</h2>
+          <p className="muted small">Erişimin olan tüm repolar, açık iş yükü ve GitShield bulguları.</p>
         </div>
-        <button className="btn" onClick={() => setRefresh((n) => n + 1)} disabled={repos.loading}>
-          <RefreshIcon size={15} className={repos.loading ? "spin" : undefined} /> Yenile
+        <button className="btn btn-sm" onClick={() => setRefresh((n) => n + 1)} disabled={repos.loading}>
+          <RefreshIcon size={14} className={repos.loading ? "spin" : undefined} /> Yenile
         </button>
       </div>
 
