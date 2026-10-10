@@ -118,6 +118,10 @@ review'u ikinci bir LLM geçişiyle doğrular ve **senin onayınla** PR'a gönde
 | **Düzeltme PR'ı** | Bir yorumdan önizlemeli, düzenlenebilir küçük bir düzeltme PR'ı açılır. |
 | **Bildirimler** | Masaüstü bildirimi ve Slack / Discord / Telegram. |
 | **Metrikler** (`/metrics`) | Merge süresi, açık PR yaşı, SLA'yı aşanlar ve GitShield'ın kendi gecikmeleri. |
+| **CI teşhisi** | Kırık CI'ın günlüğünü okur, bilinen nedenleri (Docker limiti, Dependabot secret'ı, Node sürümü, peer çakışması, audit…) tanır, hedef dalla karşılaştırır ve suçun PR'da mı ortamda mı olduğunu söyler; risk skoru da buna göre ayarlanır. |
+| **Seri ve rozetler** (`/achievements`) | Günlük hedef, seri, XP/seviye, 16 rozet, yeni rozet kutlaması ve 26 haftalık review takvimi. |
+| **Bugün paneli** | Ana sayfada bekleyen işler, seri durumu ve tek bir "sıradaki adım". |
+| **Komut paleti** (`Ctrl+K`) | Repo, bekleyen PR, sayfa ve eylemlere yazarak anında atla. |
 
 ```bash
 uv pip install -e ".[web]"
@@ -129,8 +133,20 @@ Geliştirme için `gitshield web --reload` ve ayrı bir terminalde `cd web && np
 (http://localhost:5173, `/api` istekleri 8000'e proxy'lenir).
 
 LLM sağlayıcısı `.env` üzerinden seçilir (`LLM_PROVIDER=anthropic|gemini|openai|none`, `LLM_MODEL`).
-GitHub token'ı `.env` içinde yoksa `gh auth token` kullanılır. Sunucu GitHub token'ını kullandığı için
-yalnızca `127.0.0.1`'e bağlanır; ağa açmadan önce bir kimlik doğrulama katmanı ekleyin.
+GitHub token'ı `.env` içinde yoksa `gh auth token` kullanılır. Gemini'nin ücretsiz katmanında Pro modellerin
+kotası olmadığından varsayılan Gemini modeli `gemini-flash-latest`'tir.
+
+**Güvenlik modeli.** Sunucu senin GitHub token'ınla çalışır, bu yüzden:
+
+- yalnızca `127.0.0.1`'e bağlanır; ağa açmadan önce bir kimlik doğrulama katmanı ekleyin;
+- yalnızca yerel `Host` adlarına (`127.0.0.1`, `localhost`, `::1`; ek olarak `GITSHIELD_ALLOWED_HOSTS`)
+  yanıt verir — DNS rebinding ile özel repo verisinin okunmasını engeller;
+- her yazma isteğinde `X-GitShield-Client` başlığını ve yerel bir `Origin`'i şart koşar — tarayıcıda açık
+  başka bir sitenin senin adına issue açması, CI çalıştırması ya da review göndermesi (CSRF) engellenir;
+- GitHub'a yazan her işlem (review, toplu onay, düzeltme PR'ı, issue, CI yeniden çalıştırma) arayüzde
+  ayrıca onay ister; PR içeriği LLM'e "güvenilmeyen veri" olarak verilir, bulunan secret'lar maskelenir.
+
+**Kısayollar:** `Ctrl+K` komut paleti · hızlı modda `j/k`, `x`, `m`, `a/r/c`, `Enter`, `n/p`, `?`.
 
 ---
 
