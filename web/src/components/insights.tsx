@@ -28,7 +28,7 @@ const CI: Record<CiState, [string, string, string]> = {
   none: ["muted", "–", "CI yok"],
 };
 
-const CLEARED: Record<string, string> = { environment: "ortam", base: "hedef dal" };
+const CLEARED: Record<string, string> = { environment: "ortam", base: "hedef dal", outdated: "eski dal" };
 
 export function CiBadge({ ci, compact, blame }: { ci: CiState | undefined; compact?: boolean; blame?: string | null }) {
   if (!ci || (compact && ci === "none")) return null;

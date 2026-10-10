@@ -126,7 +126,7 @@ def compute_risk(pr: Dict[str, Any], review: Optional[Dict[str, Any]] = None,
     ci = pr_ci_state(pr)
     if ci == "failure":
         # A CI diagnosis that blamed the environment or the base branch says little about this PR.
-        if ci_blame in ("environment", "base"):
+        if ci_blame in ("environment", "base", "outdated"):
             add("CI başarısız (teşhis: PR'ın suçu değil)", 5)
         else:
             add("CI başarısız", 20)

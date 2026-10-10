@@ -1,3 +1,4 @@
+import re
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -6,6 +7,11 @@ from gitshield.core.diff_parser import get_git_diff, parse_unified_diff
 from gitshield.core.entropy import find_high_entropy_tokens
 from gitshield.core.models import Finding, RuleType, ScanReport, Severity
 from gitshield.rules.engine import RuleEngine
+
+LOCKFILE = re.compile(
+    r"(^|/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|uv\.lock|"
+    r"Pipfile\.lock|pubspec\.lock|go\.sum|Cargo\.lock|Gemfile\.lock|composer\.lock|packages\.lock\.json)$"
+)
 
 
 class Scanner:
@@ -53,7 +59,9 @@ class Scanner:
                 findings.extend(rule_findings)
 
                 # 2. Shannon Entropy Analysis (Heuristic Secret Detection)
-                if enable_entropy:
+                # Lockfiles are full of integrity hashes that look random by design; skip the
+                # heuristic there (the deterministic secret rules above still run).
+                if enable_entropy and not LOCKFILE.search(line.file_path):
                     entropy_tokens = find_high_entropy_tokens(line.content)
                     for token, entropy_val in entropy_tokens:
                         # Avoid duplicate finding if rule already matched the exact token

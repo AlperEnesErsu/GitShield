@@ -11,7 +11,7 @@ from gitshield.web.config import settings
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.llm import LLMProvider
 
-Blame = Literal["pr", "environment", "base", "flaky", "unknown"]
+Blame = Literal["pr", "environment", "base", "outdated", "flaky", "unknown"]
 
 LOG_TAIL_LINES = 80
 LOG_CONTEXT_CHARS = 6000
@@ -80,13 +80,14 @@ PATTERNS = [
 ]
 
 BLAME_LABEL = {"pr": "PR'ın değişikliği", "environment": "Ortam / altyapı", "base": "Hedef dal zaten kırık",
+               "outdated": "PR dalı eski",
                "flaky": "Kararsız (flaky)", "unknown": "Belirsiz"}
 
 
 class AIDiagnosis(BaseModel):
     summary: str
     cause: str
-    blame: Literal["pr", "environment", "base", "flaky", "unknown"]
+    blame: Literal["pr", "environment", "base", "outdated", "flaky", "unknown"]
     fix_steps: List[str]
     confidence: Literal["high", "medium", "low"]
 
@@ -98,6 +99,7 @@ the base branch. Explain why CI failed and who is to blame:
 - pr: the change in this pull request causes it.
 - environment: runner, network, registry, secrets or CI configuration unrelated to the change.
 - base: the base branch already fails the same way; the PR merely inherits it.
+- outdated: the base branch was fixed after this run; the PR branch only needs updating.
 - flaky: an intermittent failure that is likely to pass on a rerun.
 - unknown: the evidence is not enough.
 
@@ -222,7 +224,19 @@ async def diagnose(gh: GitHubClient, owner: str, repo: str, pr: Dict[str, Any],
             touched = [p for p in vulnerable
                        if re.search(rf'"(node_modules/)?{re.escape(p)}":|/{re.escape(p)}/-/', changed)]
             item["audit"] = {"packages": vulnerable, "touched_by_pr": touched}
-            if vulnerable and not touched:
+            job_started = job.get("started_at")
+            base_fixed_later = bool(job_started and item["base"].get("conclusion") == "success"
+                                    and (item["base"].get("at") or "") > job_started)
+            if vulnerable and not touched and base_fixed_later:
+                # The base branch passed the same audit after this run: it was fixed there and this
+                # branch simply has not picked the fix up yet.
+                item["blame"] = "outdated"
+                item["explanation"] = (f"Hedef dalda ({base}) aynı denetim bu çalışmadan sonra yeşil geçti: "
+                                       f"açıklar ({', '.join(vulnerable[:6])}) orada düzeltilmiş, bu PR dalı "
+                                       "düzeltmeyi henüz almamış. PR'ın kendi değişiklikleri bu paketlere dokunmuyor.")
+                item["suggestion"] = ("Dalı güncelle: Dependabot PR'ıysa `@dependabot rebase` yorumu yaz, değilse "
+                                      "GitHub'da 'Update branch'.")
+            elif vulnerable and not touched:
                 item["blame"] = "base"
                 item["explanation"] = (f"Açık bulunan paketlerin ({', '.join(vulnerable[:6])}) hiçbiri bu PR'da "
                                        "değişmiyor; açıklar hedef daldan geliyor. Açık veritabanı her gün "
@@ -266,6 +280,8 @@ def verdict(jobs: List[Dict[str, Any]]) -> Dict[str, str]:
     blames = {j["blame"] for j in jobs}
     if blames == {"environment"}:
         return {"blame": "environment", "text": "PR'ın suçu değil: tüm hatalar ortam/altyapı kaynaklı."}
+    if "outdated" in blames and blames <= {"environment", "base", "outdated"}:
+        return {"blame": "outdated", "text": "PR'ın suçu değil: düzeltme hedef dalda var, PR dalını güncellemek yeterli."}
     if blames <= {"environment", "base"}:
         return {"blame": "base", "text": "PR'ın suçu değil: hatalar ortamdan ya da hedef daldan geliyor."}
     if "pr" in blames:

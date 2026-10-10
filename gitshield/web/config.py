@@ -9,6 +9,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Used when the primary model times out or returns 5xx (LLM_FALLBACK_MODEL overrides).
+DEFAULT_FALLBACK_MODELS = {
+    "gemini": "gemini-3.5-flash",
+}
+
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-5-5",
     "gemini": "gemini-flash-latest",  # free tier has no Pro quota
@@ -67,6 +72,10 @@ class Settings:
     review_language: str = field(
         default_factory=lambda: os.getenv("GITSHIELD_REVIEW_LANGUAGE", "Turkish")
     )
+
+    @property
+    def llm_fallback_model(self) -> Optional[str]:
+        return os.getenv("LLM_FALLBACK_MODEL") or DEFAULT_FALLBACK_MODELS.get(self.llm_provider)
 
     @property
     def llm_model(self) -> str:
