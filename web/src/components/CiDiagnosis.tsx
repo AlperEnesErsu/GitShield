@@ -7,6 +7,7 @@ const BLAME_TONE: Record<CiBlame | "none", string> = {
   pr: "critical",
   environment: "info",
   base: "medium",
+  outdated: "info",
   flaky: "medium",
   unknown: "muted",
   none: "success",
@@ -18,6 +19,7 @@ function JobRow({ job, repo, onRerun }: { job: CiJob; repo: string; onRerun: () 
   const [error, setError] = useState<string | null>(null);
   // Rerunning only helps when the failure is not deterministic (a broken PR or base fails again).
   const canRerun = job.is_actions && (job.blame === "environment" || job.blame === "flaky" || job.blame === "unknown");
+  // An outdated branch needs an update, not a rerun: the rerun would test the same stale code.
 
   const rerun = async () => {
     setState("busy");

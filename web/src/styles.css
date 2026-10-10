@@ -1287,3 +1287,5 @@ kbd {
 }
 .confetti.big span { animation-name: confetti-big; --angle: calc(var(--i) * 12.86deg); }
 @media (prefers-reduced-motion: reduce) { .cleared, .cleared-art { animation: none; } }
+.verdict-outdated { background: var(--low-bg); border-color: transparent; border-left-color: var(--low); }
+.ci-job.blame-outdated { border-left-color: var(--low); }

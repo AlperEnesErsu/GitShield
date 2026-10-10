@@ -4,10 +4,12 @@ Every provider exposes ``complete(system, user, schema)`` and returns a validate
 instance of ``schema`` (a Pydantic model).
 """
 
+import asyncio
+import logging
 import json
 import os
 import re
-from typing import Optional, Protocol, Type, TypeVar
+from typing import Any, Optional, Protocol, Type, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -15,10 +17,15 @@ from pydantic import BaseModel, ValidationError
 from gitshield.web.config import settings
 
 T = TypeVar("T", bound=BaseModel)
+log = logging.getLogger(__name__)
 
 
 class LLMError(Exception):
     pass
+
+
+class LLMUnavailable(LLMError):
+    """The provider did not answer (timeout, dropped connection, 5xx): worth trying another model."""
 
 
 class LLMProvider(Protocol):
@@ -38,6 +45,32 @@ def _parse_json(text: str, schema: Type[T]) -> T:
         return schema.model_validate_json(cleaned)
     except ValidationError as e:
         raise LLMError(f"Model returned JSON that does not match the schema: {e}") from e
+
+
+LLM_TIMEOUT_SEC = 150
+LLM_ATTEMPTS = 2
+RETRY_DELAY_SEC = 5
+
+
+async def post_with_retry(vendor: str, url: str, **kwargs: Any) -> httpx.Response:
+    """POST to an LLM API, retrying once on a timeout, a dropped connection or a 5xx answer.
+    A single slow or flaky call should not fail a whole (possibly unattended) review."""
+    last: Optional[Exception] = None
+    for attempt in range(LLM_ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SEC) as client:
+                resp = await client.post(url, **kwargs)
+            if resp.status_code < 500 or attempt == LLM_ATTEMPTS - 1:
+                return resp
+        except httpx.TimeoutException as e:
+            last = e
+        except httpx.TransportError as e:
+            last = e
+        await asyncio.sleep(RETRY_DELAY_SEC)
+    if isinstance(last, httpx.TimeoutException):
+        raise LLMUnavailable(f"{vendor} {LLM_ATTEMPTS} denemede de {LLM_TIMEOUT_SEC} sn içinde yanıt vermedi; "
+                       "servis yavaş olabilir, birazdan yeniden incele.") from last
+    raise LLMUnavailable(f"{vendor} API'sine bağlanılamadı ({last.__class__.__name__}); ağ bağlantını kontrol et.") from last
 
 
 def http_error_message(vendor: str, model: str, resp: httpx.Response) -> str:
@@ -116,21 +149,35 @@ class AnthropicProvider:
 class GeminiProvider:
     name = "gemini"
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, fallback: Optional[str] = None):
         self.model = model
+        self.fallback = fallback if fallback and fallback != model else None
         self._key = os.getenv("GEMINI_API_KEY", "")
 
     async def complete(self, system: str, user: str, schema: Type[T]) -> T:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        try:
+            return await self._complete(self.model, system, user, schema)
+        except LLMUnavailable:
+            if not self.fallback:
+                raise
+            # The primary model hangs or is down (a "-latest" alias can point at an overloaded
+            # model); the same request on the fallback model keeps the review going.
+            log.warning("Gemini %s unavailable, retrying on %s", self.model, self.fallback)
+            self.model, self.fallback = self.fallback, None
+            return await self._complete(self.model, system, user, schema)
+
+    async def _complete(self, model: str, system: str, user: str, schema: Type[T]) -> T:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         payload = {
             "systemInstruction": {"parts": [{"text": system + _schema_instruction(schema)}]},
             "contents": [{"role": "user", "parts": [{"text": user}]}],
             "generationConfig": {"responseMimeType": "application/json"},
         }
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(url, json=payload, headers={"x-goog-api-key": self._key})
+        resp = await post_with_retry("Gemini", url, json=payload, headers={"x-goog-api-key": self._key})
+        if resp.status_code >= 500:
+            raise LLMUnavailable(http_error_message("Gemini", model, resp))
         if resp.status_code != 200:
-            raise LLMError(http_error_message("Gemini", self.model, resp))
+            raise LLMError(http_error_message("Gemini", model, resp))
         try:
             text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError) as e:
@@ -154,12 +201,8 @@ class OpenAIProvider:
             ],
             "response_format": {"type": "json_object"},
         }
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {self._key}"},
-            )
+        resp = await post_with_retry("OpenAI", "https://api.openai.com/v1/chat/completions",
+                                     json=payload, headers={"Authorization": f"Bearer {self._key}"})
         if resp.status_code != 200:
             raise LLMError(http_error_message("OpenAI", self.model, resp))
         try:
@@ -176,7 +219,7 @@ def get_provider() -> Optional[LLMProvider]:
     if provider == "anthropic":
         return AnthropicProvider(model)
     if provider == "gemini":
-        return GeminiProvider(model)
+        return GeminiProvider(model, settings.llm_fallback_model)
     if provider == "openai":
         return OpenAIProvider(model)
     return None

@@ -128,3 +128,18 @@ def test_base_failure_overrides_unknown_pattern():
 
     jobs = _diag(BaseBroken())["jobs"]
     assert all(j["blame"] == "base" and "hedef dal" in j["explanation"] for j in jobs)
+
+
+def test_audit_fixed_on_base_after_the_run_means_outdated_branch():
+    class Outdated(CiGitHub):
+        async def actions_job(self, owner, repo, job_id):
+            job = await super().actions_job(owner, repo, job_id)
+            return {**job, "started_at": "2026-10-10T13:38:00Z"}
+
+        async def workflow_runs(self, owner, repo, workflow_id, branch, limit=5):
+            return [{"id": 200, "html_url": "https://x/200", "updated_at": "2026-10-10T13:45:00Z", "event": "push"}]
+
+    d = asyncio.run(diagnose(Outdated(), "acme", "app", Outdated().pr))
+    audit = next(j for j in d["jobs"] if j["name"] == "dependency audit")
+    assert audit["blame"] == "outdated" and "rebase" in audit["suggestion"]
+    assert d["verdict"]["blame"] == "outdated"
