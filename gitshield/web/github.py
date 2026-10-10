@@ -115,6 +115,21 @@ query($owner: String!, $name: String!) {
 """
 
 
+def rate_limit_message(resp: httpx.Response) -> Optional[str]:
+    """A readable message when GitHub refused the request because of a rate limit, else None."""
+    if resp.status_code not in (403, 429):
+        return None
+    if resp.headers.get("x-ratelimit-remaining") == "0":
+        reset = resp.headers.get("x-ratelimit-reset")
+        when = time.strftime("%H:%M", time.localtime(int(reset))) if reset and reset.isdigit() else "kısa süre sonra"
+        return f"GitHub API limiti doldu; {when} itibarıyla sıfırlanır. O zamana kadar sayfaları yenilemeyi azalt."
+    retry = resp.headers.get("retry-after")
+    if retry or "secondary rate limit" in resp.text.lower():
+        wait = f"{retry} sn" if retry else "bir süre"
+        return f"GitHub çok sık istek yapıldığını bildirdi (ikincil limit); {wait} bekleyip tekrar dene."
+    return None
+
+
 class GitHubError(Exception):
     def __init__(self, status_code: int, message: str):
         super().__init__(message)
@@ -145,6 +160,9 @@ class GitHubClient:
         if not self.token:
             raise GitHubError(401, "GITHUB_TOKEN is not configured.")
         resp = await self._client.request(method, path, **kwargs)
+        limited = rate_limit_message(resp)
+        if limited:
+            raise GitHubError(429, limited)
         if resp.status_code >= 400:
             try:
                 detail = resp.json().get("message", resp.text)

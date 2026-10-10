@@ -1,4 +1,5 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { api } from "./api";
 import { MonitorIcon, MoonIcon, ShieldIcon, SunIcon } from "./components/icons";
 import { useAsync } from "./hooks";
@@ -33,6 +34,7 @@ function InboxLink() {
 }
 
 function Shell() {
+  const location = useLocation();
   const status = useAsync(() => api.status(), []);
   const [theme, setTheme] = useTheme();
   const s = status.data;
@@ -85,7 +87,11 @@ function Shell() {
         </div>
       )}
       <main className="content">
-        <Outlet />
+        <ErrorBoundary resetKey={location.pathname}>
+          <div className="route-fade" key={location.pathname}>
+            <Outlet />
+          </div>
+        </ErrorBoundary>
       </main>
     </div>
   );
