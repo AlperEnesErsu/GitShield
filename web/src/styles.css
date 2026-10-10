@@ -1260,3 +1260,30 @@ kbd {
 
 /* A submitted review has nothing left to act on: the bar no longer floats over the content. */
 .submit-bar.is-done { position: static; box-shadow: var(--shadow); background: var(--success-bg); border-color: transparent; }
+
+/* Quick mode: queue cleared */
+.cleared {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 44px 24px 32px; text-align: center; border-radius: 18px; border: 1px solid var(--border); box-shadow: var(--shadow);
+  background:
+    radial-gradient(500px 200px at 50% 0%, color-mix(in srgb, var(--series-3) 16%, transparent), transparent 70%),
+    var(--surface);
+  animation: toast-in 500ms cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+.cleared h2 { font-size: 26px; letter-spacing: -0.02em; }
+.cleared-art { font-size: 54px; animation: medal-pop 800ms 150ms cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+.cleared-stats { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin: 6px 0 8px; }
+.cleared-stats div {
+  min-width: 96px; padding: 10px 14px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.cleared-stats strong { font-size: 22px; font-weight: 720; }
+.cleared-stats span { font-size: 12px; color: var(--text-muted); }
+.cleared-stats .xp strong { color: var(--accent); }
+.confetti.big span { left: 50%; top: 32%; width: 8px; height: 13px; animation-duration: 1600ms; }
+@keyframes confetti-big {
+  0% { opacity: 1; transform: rotate(var(--angle)) translateY(0) rotate(0deg); }
+  100% { opacity: 0; transform: rotate(var(--angle)) translateY(-180px) rotate(360deg); }
+}
+.confetti.big span { animation-name: confetti-big; --angle: calc(var(--i) * 12.86deg); }
+@media (prefers-reduced-motion: reduce) { .cleared, .cleared-art { animation: none; } }
