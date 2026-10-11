@@ -1,29 +1,34 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ACTIVITY_EVENT, api, Badge, Gamification } from "./api";
+import { ACTIVITY_EVENT, api, Badge, Gamification, GamificationResponse, isGamificationOn } from "./api";
 
 const REFRESH_MS = 120_000;
 const TOAST_MS = 6000;
 
 interface GamificationValue {
+  /** The full progress object; null while loading, or when gamification is disabled on the server. */
   data: Gamification | null;
+  /** False only once the server has said gamification is off, so achievement UI can be hidden. */
+  enabled: boolean;
   reload: () => void;
-  setData: (g: Gamification) => void;
+  setData: (g: GamificationResponse) => void;
 }
 
 const GamificationContext = createContext<GamificationValue | null>(null);
 
 /** Loads progress, refreshes after every write (ACTIVITY_EVENT) and celebrates new badges once. */
 export function GamificationProvider({ children }: { children: ReactNode }) {
-  const [data, setData] = useState<Gamification | null>(null);
+  const [state, setState] = useState<GamificationResponse | null>(null);
   const [toasts, setToasts] = useState<Badge[]>([]);
   const timer = useRef<number | null>(null);
+  const data = state && isGamificationOn(state) ? state : null;
+  const enabled = state === null || isGamificationOn(state);
 
   const reload = useCallback(() => {
     api.gamification()
       .then((g) => {
-        setData(g);
-        if (g.new_badges.length) {
+        setState(g);
+        if (isGamificationOn(g) && g.new_badges.length) {
           setToasts((t) => [...t, ...g.new_badges.filter((b) => !t.some((x) => x.id === b.id))]);
           void api.markBadgesSeen().catch(() => undefined);
         }
@@ -53,7 +58,7 @@ export function GamificationProvider({ children }: { children: ReactNode }) {
   }, [toasts]);
 
   return (
-    <GamificationContext.Provider value={{ data, reload, setData }}>
+    <GamificationContext.Provider value={{ data, enabled, reload, setData: setState }}>
       {children}
       {toasts[0] && <BadgeToast key={toasts[0].id} badge={toasts[0]} onClose={() => setToasts((l) => l.slice(1))} />}
     </GamificationContext.Provider>

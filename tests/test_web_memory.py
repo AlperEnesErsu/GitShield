@@ -9,14 +9,28 @@ from gitshield.web.review import memory_prompt, run_review, suppressing_memory
 from tests.test_web_review import FakeGitHub, FakeProvider
 
 
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
+
+
 def _run(db, provider=None):
     rid = db.create_review("acme/app", 7, "Add config", "abc123", "none", "")
     asyncio.run(run_review(db, FakeGitHub(), provider, rid, "acme", "app", 7))
     return db.get_review(rid)
 
 
-def test_suppressed_scanner_rule_is_rejected_next_time(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_suppressed_scanner_rule_is_rejected_next_time(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     first = _run(db)
     target = first["comments"][0]
     assert target["rule_id"], "scanner comments carry their rule id"
@@ -41,8 +55,8 @@ def test_file_scoped_suppression_does_not_leak_to_other_files():
     assert suppressing_memory(other, memory) is None
 
 
-def test_memory_reaches_the_llm_prompts(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_memory_reaches_the_llm_prompts(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     db.add_memory("acme/app", "rule", "Bu repoda Riverpod kullanılıyor; Provider önerme.")
     db.add_memory("acme/app", "suppress", "Magic number: ...", path=None)
     provider = FakeProvider()
@@ -53,8 +67,8 @@ def test_memory_reaches_the_llm_prompts(tmp_path):
     assert "whole repository" in memory_prompt(db.list_memory("acme/app"))
 
 
-def test_inactive_memory_is_ignored(tmp_path):
-    db = Database(tmp_path / "t.db")
+def test_inactive_memory_is_ignored(tmp_path, open_db):
+    db = open_db(tmp_path / "t.db")
     item = db.add_memory("acme/app", "rule", "Kural")
     db.update_memory(item["id"], active=False)
     assert memory_prompt(db.list_memory("acme/app", active_only=True)) == ""

@@ -3,7 +3,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -55,13 +54,32 @@ class Settings:
         default_factory=lambda: os.getenv("GITHUB_API_URL", "https://api.github.com")
     )
     llm_provider: str = field(default_factory=_detect_provider)
-    llm_model_override: Optional[str] = field(default_factory=lambda: os.getenv("LLM_MODEL"))
+    llm_model_override: str | None = field(default_factory=lambda: os.getenv("LLM_MODEL"))
     db_path: Path = field(
         default_factory=lambda: Path(os.getenv("GITSHIELD_DB", ".gitshield/web.db"))
     )
     # Upper bound on diff characters sent to the LLM; files beyond it are listed as skipped.
     max_diff_chars: int = field(
-        default_factory=lambda: int(os.getenv("GITSHIELD_MAX_DIFF_CHARS", "400000"))
+        default_factory=lambda: int(os.getenv("GITSHIELD_MAX_DIFF_CHARS", "150000"))
+    )
+    # Anthropic reasoning effort (LLM_EFFORT): lower is cheaper and faster.
+    llm_effort: str = field(
+        default_factory=lambda: os.getenv("LLM_EFFORT", "medium").strip().lower() or "medium"
+    )
+    # Daily cap on LLM requests (review, verification, fix, CI deep-dive); 0 = unlimited.
+    max_llm_calls_per_day: int = field(
+        default_factory=lambda: int(os.getenv("GITSHIELD_MAX_LLM_CALLS_PER_DAY", "200"))
+    )
+    # Daily cap on reviews the watcher starts on its own; 0 = unlimited.
+    max_auto_reviews_per_day: int = field(
+        default_factory=lambda: int(os.getenv("GITSHIELD_MAX_AUTO_REVIEWS_PER_DAY", "20"))
+    )
+    # When set, every /api/* request must present it (Bearer header or the gitshield_token cookie).
+    api_token: str = field(default_factory=lambda: os.getenv("GITSHIELD_API_TOKEN", "").strip())
+    # "off" hides the gamification API and its XP / streak scoring.
+    gamification_enabled: bool = field(
+        default_factory=lambda: os.getenv("GITSHIELD_GAMIFICATION", "on").strip().lower()
+        not in ("off", "0", "false", "no")
     )
 
     # Seconds between auto-review polls of opted-in repos; 0 disables the watcher.
@@ -74,7 +92,7 @@ class Settings:
     )
 
     @property
-    def llm_fallback_model(self) -> Optional[str]:
+    def llm_fallback_model(self) -> str | None:
         return os.getenv("LLM_FALLBACK_MODEL") or DEFAULT_FALLBACK_MODELS.get(self.llm_provider)
 
     @property

@@ -6,6 +6,7 @@ rules:
     rule_type: 'OWASP'
     pattern: '(?i)(?:cursor\.execute|db\.query|session\.execute)\s*\(\s*(?:f["'']|["''].*%|.*\.format\()'
     cwe: 'CWE-89'
+    file_patterns: ['*.py', '*.js', '*.jsx', '*.ts', '*.tsx']
     remediation: 'Use parameterized queries or prepared statements (e.g., `cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))`).'
 
   - id: 'OWASP-A03-CMDI-002'
@@ -15,6 +16,7 @@ rules:
     rule_type: 'OWASP'
     pattern: '(?:subprocess\.(?:Popen|run|call|check_output)\s*\(.*shell\s*=\s*True|os\.system\s*\()'
     cwe: 'CWE-78'
+    file_patterns: ['*.py']
     remediation: 'Pass arguments as a list and avoid `shell=True` (e.g. `subprocess.run(["git", "status"], shell=False)`).'
 
   - id: 'OWASP-A03-EVAL-003'
@@ -22,8 +24,11 @@ rules:
     description: 'Execution of dynamic code using eval() or exec() poses critical Remote Code Execution (RCE) risk.'
     severity: 'CRITICAL'
     rule_type: 'OWASP'
-    pattern: '(?:eval|exec)\s*\([^)]+\)'
+    # Bare eval/exec calls and builtins.eval/exec only. Excludes ast.literal_eval( (preceded by "_")
+    # and method calls such as regex.exec( or model.eval( (preceded by ".").
+    pattern: '(?:(?<![\w.])|(?<=builtins\.))(?:eval|exec)\s*\([^)]+\)'
     cwe: 'CWE-95'
+    file_patterns: ['*.py', '*.js', '*.jsx', '*.ts', '*.tsx']
     remediation: 'Replace eval/exec with safe parsers such as `ast.literal_eval()` or `json.loads()`.'
 
   - id: 'OWASP-A08-PICKLE-004'
@@ -33,6 +38,7 @@ rules:
     rule_type: 'OWASP'
     pattern: 'pickle\.loads?\s*\('
     cwe: 'CWE-502'
+    file_patterns: ['*.py']
     remediation: 'Use secure data formats like JSON, MessagePack, or Protocol Buffers instead of pickle.'
 
   - id: 'OWASP-A02-HASH-005'
@@ -42,6 +48,7 @@ rules:
     rule_type: 'OWASP'
     pattern: 'hashlib\.(?:md5|sha1)\s*\('
     cwe: 'CWE-328'
+    file_patterns: ['*.py']
     remediation: 'Use SHA-256 (`hashlib.sha256()`) or modern password hashing functions (Argon2, bcrypt).'
 
   - id: 'OWASP-A03-XSS-006'
@@ -51,4 +58,5 @@ rules:
     rule_type: 'OWASP'
     pattern: 'dangerouslySetInnerHTML\s*=\s*\{\s*\{\s*__html:'
     cwe: 'CWE-79'
+    file_patterns: ['*.jsx', '*.tsx', '*.js', '*.ts']
     remediation: 'Sanitize raw HTML using DOMPurify before rendering, or prefer standard JSX children.'

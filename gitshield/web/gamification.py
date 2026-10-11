@@ -6,9 +6,10 @@ can celebrate new ones exactly once)."""
 
 import json
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from gitshield.web.db import Database
 
@@ -18,13 +19,13 @@ LEVEL_TITLES = ["Çaylak", "Gözcü", "Muhafız", "Bekçi", "Kalkan Ustası", "K
 FAST_APPROVAL_MIN = 15
 
 
-def local_day(ts: Optional[str]) -> Optional[date]:
+def local_day(ts: str | None) -> date | None:
     if not ts:
         return None
     return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date()
 
 
-def level_for(xp: int) -> Dict[str, Any]:
+def level_for(xp: int) -> dict[str, Any]:
     """Level n needs 100·n·(n+1)/2 XP in total: 100, 300, 600, 1000 …"""
     level = int((math.sqrt(1 + 8 * xp / 100) - 1) / 2) + 1
     floor = 100 * (level - 1) * level // 2
@@ -39,7 +40,7 @@ def level_for(xp: int) -> Dict[str, Any]:
     }
 
 
-def review_xp(review: Dict[str, Any]) -> int:
+def review_xp(review: dict[str, Any]) -> int:
     """XP for one submitted review: base + real findings + severity + speed."""
     if review["origin"] == "batch":
         return 3
@@ -54,12 +55,12 @@ def review_xp(review: Dict[str, Any]) -> int:
     return xp
 
 
-def streaks(days_with_reviews: List[date], today: date) -> Dict[str, int]:
+def streaks(days_with_reviews: list[date], today: date) -> dict[str, int]:
     """Current streak counts back from today (or yesterday, so today is not lost before the
     first review of the day); best is the longest run ever."""
     days = sorted(set(days_with_reviews))
     best = run = 0
-    prev: Optional[date] = None
+    prev: date | None = None
     for d in days:
         run = run + 1 if prev and d - prev == timedelta(days=1) else 1
         best = max(best, run)
@@ -73,14 +74,14 @@ def streaks(days_with_reviews: List[date], today: date) -> Dict[str, int]:
     return {"current": current, "best": best}
 
 
-def streak_timeline(manual: List[Dict[str, Any]]) -> List[str]:
+def streak_timeline(manual: list[dict[str, Any]]) -> list[str]:
     """Element n-1 is the first review of the day a streak first reached n days."""
-    first_of_day: Dict[date, str] = {}
+    first_of_day: dict[date, str] = {}
     for r in manual:
         d = local_day(r["submitted_at"])
         if d and (d not in first_of_day or r["submitted_at"] < first_of_day[d]):
             first_of_day[d] = r["submitted_at"]
-    reached: List[str] = []
+    reached: list[str] = []
     run, prev = 0, None
     for d in sorted(first_of_day):
         run = run + 1 if prev and d - prev == timedelta(days=1) else 1
@@ -97,13 +98,13 @@ class Badge:
     description: str
     icon: str
     target: int
-    metric: Callable[[Dict[str, Any]], int]
+    metric: Callable[[dict[str, Any]], int]
     tier: str = "bronze"
     # Key into the timelines dict: when the target was reached is timeline[target - 1].
-    timeline: Optional[str] = None
+    timeline: str | None = None
 
 
-BADGES: List[Badge] = [
+BADGES: list[Badge] = [
     Badge("first-review", "İlk Kan", "İlk review'unu GitHub'a gönder.", "🛡️", 1, lambda s: s["reviews"], timeline="reviews"),
     Badge("ten-reviews", "Düzenli Bekçi", "10 review gönder.", "🏅", 10, lambda s: s["reviews"], "silver", timeline="reviews"),
     Badge("fifty-reviews", "Kale Komutanı", "50 review gönder.", "🏰", 50, lambda s: s["reviews"], "gold", timeline="reviews"),
@@ -129,7 +130,7 @@ BADGES: List[Badge] = [
 ]
 
 
-def _submitted_reviews(db: Database) -> List[Dict[str, Any]]:
+def _submitted_reviews(db: Database) -> list[dict[str, Any]]:
     rows = db.query(
         "SELECT r.id, r.origin, r.submitted_at, r.progress,"
         " (SELECT COUNT(*) FROM review_comments c WHERE c.review_id = r.id AND c.included = 1) AS included,"
@@ -150,7 +151,7 @@ def _submitted_reviews(db: Database) -> List[Dict[str, Any]]:
     return rows
 
 
-def compute(db: Database, today: Optional[date] = None) -> Dict[str, Any]:
+def compute(db: Database, today: date | None = None) -> dict[str, Any]:
     today = today or datetime.now().astimezone().date()
     reviews = _submitted_reviews(db)
     manual = [r for r in reviews if r["origin"] != "batch"]
@@ -179,10 +180,10 @@ def compute(db: Database, today: Optional[date] = None) -> Dict[str, Any]:
         "night_reviews": sum(1 for r in manual if datetime.fromisoformat(r["submitted_at"]).astimezone().hour < 5),
     }
 
-    def stamps(rows: List[Dict[str, Any]], key: str) -> List[str]:
+    def stamps(rows: list[dict[str, Any]], key: str) -> list[str]:
         return sorted(r[key] for r in rows if r.get(key))
 
-    timelines: Dict[str, List[str]] = {
+    timelines: dict[str, list[str]] = {
         "reviews": [r["submitted_at"] for r in manual],
         "findings": [r["submitted_at"] for r in manual for _ in range(r["included"])],
         "critical_reviews": [r["submitted_at"] for r in manual if r["critical"]],
@@ -199,7 +200,7 @@ def compute(db: Database, today: Optional[date] = None) -> Dict[str, Any]:
 
     xp = sum(review_xp(r) for r in reviews) + 15 * fix_prs + 8 * issues + 2 * memory + 2 * ci
     goal = int(db.get_setting("daily_goal", str(DEFAULT_DAILY_GOAL)) or DEFAULT_DAILY_GOAL)
-    per_day: Dict[date, int] = {}
+    per_day: dict[date, int] = {}
     for d in days:
         per_day[d] = per_day.get(d, 0) + 1
     heatmap = [{"date": (today - timedelta(days=i)).isoformat(), "count": per_day.get(today - timedelta(days=i), 0)}

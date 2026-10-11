@@ -1,9 +1,12 @@
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from gitshield.core.models import ScanReport, Severity
 
+from gitshield.core.models import Finding, RuleType, ScanReport, Severity
+
+SECRET_TYPES = (RuleType.SECRET, RuleType.ENTROPY)
 
 SEVERITY_COLORS = {
     Severity.CRITICAL: "bold red",
@@ -12,6 +15,13 @@ SEVERITY_COLORS = {
     Severity.LOW: "cyan",
     Severity.INFO: "blue",
 }
+
+
+def _display_match(finding: Finding) -> str:
+    """Secret findings are always shown masked; other matches are shown as found."""
+    if finding.rule_type in SECRET_TYPES and finding.matched_text:
+        return finding.mask_secret()
+    return finding.matched_text
 
 
 def print_report_to_console(report: ScanReport, console: Console | None = None) -> None:
@@ -55,7 +65,7 @@ def print_report_to_console(report: ScanReport, console: Console | None = None) 
 
         rule_info = f"[bold]{f.rule_id}[/bold]\n[dim]{f.title}[/dim]"
         loc_info = f"{f.file_path}:{f.line_number}"
-        masked = f.mask_secret() if f.entropy or "SEC" in f.rule_id else f.matched_text
+        masked = _display_match(f)
         if len(masked) > 30:
             masked = masked[:27] + "..."
 
@@ -63,7 +73,7 @@ def print_report_to_console(report: ScanReport, console: Console | None = None) 
         if len(fix) > 60:
             fix = fix[:57] + "..."
 
-        table.add_row(sev_text, rule_info, loc_info, masked, fix)
+        table.add_row(sev_text, escape(rule_info), escape(loc_info), escape(masked), escape(fix))
 
     console.print(table)
     console.print()

@@ -2,14 +2,14 @@
 
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 import httpx
 
 log = logging.getLogger(__name__)
 
 
-def channels() -> List[str]:
+def channels() -> list[str]:
     found = []
     if os.getenv("GITSHIELD_SLACK_WEBHOOK"):
         found.append("slack")
@@ -24,7 +24,7 @@ def app_url() -> str:
     return os.getenv("GITSHIELD_PUBLIC_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
-def review_message(review: Dict[str, Any]) -> str:
+def review_message(review: dict[str, Any]) -> str:
     link = f"{app_url()}/r/{review['repo']}/pull/{review['pr_number']}"
     head = f"🛡️ GitShield · {review['repo']} #{review['pr_number']} — {review.get('pr_title', '')}".rstrip(" —")
     if review["status"] == "failed":
@@ -36,9 +36,9 @@ def review_message(review: Dict[str, Any]) -> str:
     return f"{head}\n✅ Review onayını bekliyor · önerilen karar: {verdict} · {detail}\n{link}"
 
 
-async def send(text: str) -> Dict[str, str]:
+async def send(text: str) -> dict[str, str]:
     """Send ``text`` to every configured channel; returns channel -> 'ok' or an error message."""
-    results: Dict[str, str] = {}
+    results: dict[str, str] = {}
     async with httpx.AsyncClient(timeout=15.0) as client:
         for channel in channels():
             try:
@@ -61,7 +61,7 @@ async def send(text: str) -> Dict[str, str]:
     return results
 
 
-async def notify_review(review: Dict[str, Any]) -> None:
+async def notify_review(review: dict[str, Any]) -> None:
     """Best-effort: a notification failure must never fail the review."""
     if not channels() or review.get("status") not in ("ready", "failed"):
         return

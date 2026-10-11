@@ -4,7 +4,7 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -41,7 +41,7 @@ class LLMComment(BaseModel):
 class ReviewOutput(BaseModel):
     summary: str
     verdict: Verdict
-    comments: List[LLMComment]
+    comments: list[LLMComment]
 
 
 class VerificationItem(BaseModel):
@@ -51,7 +51,7 @@ class VerificationItem(BaseModel):
 
 
 class VerificationOutput(BaseModel):
-    items: List[VerificationItem]
+    items: list[VerificationItem]
     recommended_verdict: Verdict
     notes: str
 
@@ -63,7 +63,7 @@ class FollowupItem(BaseModel):
 
 
 class FollowupOutput(BaseModel):
-    items: List[FollowupItem]
+    items: list[FollowupItem]
 
 
 # ---- Prompts -------------------------------------------------------------------
@@ -123,10 +123,10 @@ Return one item per index. Write `reason` in {language}."""
 # ---- Diff helpers ----------------------------------------------------------------
 
 
-def annotate_patch(patch: str) -> Tuple[str, Set[int]]:
+def annotate_patch(patch: str) -> tuple[str, set[int]]:
     """Prefix each patch line with its new-file line number; return commentable lines."""
-    out: List[str] = []
-    commentable: Set[int] = set()
+    out: list[str] = []
+    commentable: set[int] = set()
     new_line = 0
     for raw in patch.splitlines():
         header = HUNK_HEADER.match(raw)
@@ -143,12 +143,12 @@ def annotate_patch(patch: str) -> Tuple[str, Set[int]]:
     return "\n".join(out), commentable
 
 
-def build_diff(files: List[Dict[str, Any]], max_chars: int):
+def build_diff(files: list[dict[str, Any]], max_chars: int):
     """Return (raw unified diff, annotated diff for the LLM, commentable lines, skipped files)."""
-    raw_parts: List[str] = []
-    annotated_parts: List[str] = []
-    commentable: Dict[str, Set[int]] = {}
-    skipped: List[Dict[str, str]] = []
+    raw_parts: list[str] = []
+    annotated_parts: list[str] = []
+    commentable: dict[str, set[int]] = {}
+    skipped: list[dict[str, str]] = []
     used = 0
 
     for f in files:
@@ -173,7 +173,7 @@ def build_diff(files: List[Dict[str, Any]], max_chars: int):
 HUNK_FULL = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
-def map_old_line(patch: str, line: int, radius: int = 2) -> Tuple[Optional[int], bool]:
+def map_old_line(patch: str, line: int, radius: int = 2) -> tuple[int | None, bool]:
     """Map ``line`` of the old file through ``patch`` to the new file.
 
     Returns (new_line or None if the line was deleted, touched) where ``touched`` means a
@@ -182,7 +182,7 @@ def map_old_line(patch: str, line: int, radius: int = 2) -> Tuple[Optional[int],
     offset = 0
     old = new = 0
     touched = False
-    mapped: Optional[int] = None
+    mapped: int | None = None
     in_hunk_hit = False
     for raw in patch.splitlines():
         header = HUNK_FULL.match(raw)
@@ -218,7 +218,7 @@ def map_old_line(patch: str, line: int, radius: int = 2) -> Tuple[Optional[int],
 
 
 def find_previous_review(db: Database, repo: str, number: int, review_id: int,
-                         head_sha: str) -> Optional[Dict[str, Any]]:
+                         head_sha: str) -> dict[str, Any] | None:
     """The most recent finished review of this PR made for a different (older) commit."""
     for r in db.list_pr_reviews(repo, number):
         if r["id"] != review_id and r["status"] in ("ready", "submitted") and r["head_sha"] != head_sha:
@@ -226,12 +226,12 @@ def find_previous_review(db: Database, repo: str, number: int, review_id: int,
     return None
 
 
-async def check_followups(provider: Optional[LLMProvider], previous: Dict[str, Any],
-                          delta_files: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def check_followups(provider: LLMProvider | None, previous: dict[str, Any],
+                          delta_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Classify each still-relevant comment of ``previous`` as fixed / still_open / unclear."""
     patches = {f["filename"]: f for f in delta_files}
-    results: List[Dict[str, Any]] = []
-    candidates: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     for c in previous["comments"]:
         if not c["included"] or c["verification"] == "rejected" or c["line"] is None:
             continue
@@ -268,7 +268,7 @@ async def check_followups(provider: Optional[LLMProvider], previous: Dict[str, A
     return results
 
 
-def memory_prompt(memory: List[Dict[str, Any]]) -> str:
+def memory_prompt(memory: list[dict[str, Any]]) -> str:
     """Render active repo memory for the reviewer and verifier prompts ('' when empty)."""
     rules = [m for m in memory if m["kind"] == "rule"]
     dismissed = [m for m in memory if m["kind"] == "suppress"]
@@ -287,7 +287,7 @@ def _norm(text: str) -> str:
     return re.sub(r"\W+", " ", text.lower()).strip()
 
 
-def suppressing_memory(c: Dict[str, Any], memory: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def suppressing_memory(c: dict[str, Any], memory: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Deterministic match: same scanner rule, or the exact same title, within the memory's scope."""
     for m in memory:
         if m["kind"] != "suppress" or (m["path"] and m["path"] != c["path"]):
@@ -303,7 +303,7 @@ def fingerprint(path: str, key: str) -> str:
     return hashlib.sha1(f"{path}:{key.lower().strip()}".encode()).hexdigest()[:16]
 
 
-def format_comment_markdown(c: Dict[str, Any]) -> str:
+def format_comment_markdown(c: dict[str, Any]) -> str:
     text = f"**{SEVERITY_ICON.get(c['severity'], '')} [{c['severity']}] {c['title']}**\n\n{c['body']}"
     if c.get("suggestion"):
         text += f"\n\n**Öneri:**\n```\n{c['suggestion']}\n```"
@@ -322,7 +322,7 @@ STEPS = [
 ]
 
 
-def initial_progress() -> List[Dict[str, Any]]:
+def initial_progress() -> list[dict[str, Any]]:
     return [{"key": k, "label": label, "status": "pending", "detail": "",
              "started_at": None, "finished_at": None} for k, label in STEPS]
 
@@ -330,12 +330,12 @@ def initial_progress() -> List[Dict[str, Any]]:
 class Progress:
     """Persists per-step status so the UI can draw the pipeline live."""
 
-    def __init__(self, db: Database, review_id: int, steps: Optional[List[Dict[str, Any]]] = None):
+    def __init__(self, db: Database, review_id: int, steps: list[dict[str, Any]] | None = None):
         self.db = db
         self.review_id = review_id
         self.steps = steps if steps else initial_progress()
 
-    def _set(self, key: str, status: str, detail: Optional[str]) -> None:
+    def _set(self, key: str, status: str, detail: str | None) -> None:
         for step in self.steps:
             if step["key"] != key:
                 continue
@@ -373,8 +373,8 @@ class Progress:
 # ---- Pipeline ---------------------------------------------------------------------
 
 
-def begin_review(db: Database, pr: Dict[str, Any], full_name: str,
-                 provider: Optional[LLMProvider], origin: str = "manual") -> int:
+def begin_review(db: Database, pr: dict[str, Any], full_name: str,
+                 provider: LLMProvider | None, origin: str = "manual") -> int:
     """Create the review row (status running) with an all-pending progress template.
 
     ``origin`` records who started it: manual (the user), auto (the watcher) or batch
@@ -388,7 +388,7 @@ def begin_review(db: Database, pr: Dict[str, Any], full_name: str,
 
 
 
-async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvider],
+async def run_review(db: Database, gh: GitHubClient, provider: LLMProvider | None,
                      review_id: int, owner: str, repo: str, number: int,
                      force_full: bool = False, notify: bool = True) -> None:
     full_name = f"{owner}/{repo}"
@@ -403,7 +403,8 @@ async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvi
         # Incremental mode: review only what changed since the last reviewed commit.
         previous = None if force_full else find_previous_review(
             db, full_name, number, review_id, pr["head"]["sha"])
-        delta_files: Optional[List[Dict[str, Any]]] = None
+        delta_files: list[dict[str, Any]] | None = None
+        commits = 0
         if previous:
             try:
                 cmp = await gh.compare(owner, repo, previous["head_sha"], pr["head"]["sha"])
@@ -413,7 +414,7 @@ async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvi
                     commits = len(cmp.get("commits", []))
             except GitHubError:
                 delta_files = None
-        if delta_files is not None:
+        if previous and delta_files is not None:
             raw_diff, annotated, _, skipped = build_diff(delta_files, settings.max_diff_chars)
             db.update_review(review_id, mode="incremental", base_sha=previous["head_sha"])
             fetch_detail = (f"Artımlı: {previous['head_sha'][:7]} → {pr['head']['sha'][:7]} · "
@@ -434,26 +435,26 @@ async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvi
         for secret in secrets:
             annotated = annotated.replace(secret, "<REDACTED_SECRET>")
 
-        candidates: List[Dict[str, Any]] = []
-        for f in report.findings:
-            context = f.context or ""
+        candidates: list[dict[str, Any]] = []
+        for finding in report.findings:
+            context = finding.context or ""
             for secret in secrets:
                 context = context.replace(secret, "<REDACTED_SECRET>")
-            body = f.description
-            if f.cwe:
-                body += f" ({f.cwe})"
+            body = finding.description
+            if finding.cwe:
+                body += f" ({finding.cwe})"
             if context:
                 body += f"\n\n```\n{context}\n```"
             candidates.append({
-                "source": "scanner", "path": f.file_path, "line": f.line_number,
-                "severity": f.severity.value,
-                "category": "security", "title": f.title, "body": body,
-                "suggestion": f.suggested_fix or "", "rule_id": f.rule_id,
+                "source": "scanner", "path": finding.file_path, "line": finding.line_number,
+                "severity": finding.severity.value,
+                "category": "security", "title": finding.title, "body": body,
+                "suggestion": finding.suggested_fix or "", "rule_id": finding.rule_id,
             })
 
         summary = ""
         verdict = "COMMENT"
-        recommended: Optional[str] = None
+        recommended: str | None = None
         verifier_notes = ""
 
         if provider:
@@ -476,11 +477,12 @@ async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvi
                 REVIEW_SYSTEM.format(language=settings.review_language), review_prompt, ReviewOutput
             )
             summary, verdict = review.summary, review.verdict
-            for c in review.comments:
+            for llm_comment in review.comments:
                 candidates.append({
-                    "source": "llm", "path": c.path, "line": c.line, "severity": c.severity,
-                    "category": c.category, "title": c.title, "body": c.body,
-                    "suggestion": c.suggestion, "rule_id": None,
+                    "source": "llm", "path": llm_comment.path, "line": llm_comment.line,
+                    "severity": llm_comment.severity, "category": llm_comment.category,
+                    "title": llm_comment.title, "body": llm_comment.body,
+                    "suggestion": llm_comment.suggestion, "rule_id": None,
                 })
             progress.done("ai_review", f"{provider.model} · {len(review.comments)} yorum"
                                        + (f" · hafızada {len(memory)} kayıt" if memory else ""))
@@ -544,7 +546,7 @@ async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvi
         if suppressed_ids:
             progress.append("verify", f"hafıza {len(suppressed_ids)} yorumu susturdu")
 
-        followups: List[Dict[str, Any]] = []
+        followups: list[dict[str, Any]] = []
         if previous:
             followups = await check_followups(provider, previous, delta_files or [])
             open_items = [f for f in followups if f["status"] != "fixed"]
@@ -624,10 +626,12 @@ async def run_review(db: Database, gh: GitHubClient, provider: Optional[LLMProvi
         progress.fail_running(message)
         db.update_review(review_id, status="failed", error=message)
     if notify:
-        await notify_review(db.get_review(review_id))
+        saved = db.get_review(review_id)
+        if saved:
+            await notify_review(saved)
 
 
-def draft_issue_body(c: Dict[str, Any], pr: Dict[str, Any], html_base: str) -> str:
+def draft_issue_body(c: dict[str, Any], pr: dict[str, Any], html_base: str) -> str:
     location = f"{html_base}/blob/{pr['head']['sha']}/{c['path']}#L{c['line']}"
     body = (
         f"GitShield, PR [#{pr['number']} {pr['title']}]({pr['html_url']}) incelemesinde bu sorunu "
@@ -648,8 +652,8 @@ def draft_issue_body(c: Dict[str, Any], pr: Dict[str, Any], html_base: str) -> s
 # ---- Submission -----------------------------------------------------------------
 
 
-async def submit_review(db: Database, gh: GitHubClient, review: Dict[str, Any],
-                        event: Optional[str] = None) -> Dict[str, Any]:
+async def submit_review(db: Database, gh: GitHubClient, review: dict[str, Any],
+                        event: str | None = None) -> dict[str, Any]:
     owner, repo = review["repo"].split("/", 1)
     included = [c for c in review["comments"] if c["included"]]
     inline = [c for c in included if c["in_diff"]]
@@ -702,8 +706,8 @@ async def submit_review(db: Database, gh: GitHubClient, review: Dict[str, Any],
     return result
 
 
-def comment_to_issue(db: Database, comment: Dict[str, Any], review: Dict[str, Any],
-                     pr: Dict[str, Any]) -> Optional[int]:
+def comment_to_issue(db: Database, comment: dict[str, Any], review: dict[str, Any],
+                     pr: dict[str, Any]) -> int | None:
     html_base = pr["head"]["repo"]["html_url"] if pr["head"].get("repo") else pr["base"]["repo"]["html_url"]
     return db.add_draft_issue(
         review["repo"], review["id"], comment["id"],

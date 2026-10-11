@@ -10,6 +10,20 @@ from gitshield.web.review import run_review
 from tests.test_web_review import FakeGitHub
 
 
+@pytest.fixture()
+def open_db():
+    """Open databases for a test and close them afterwards, so no SQLite connection leaks."""
+    opened = []
+
+    def factory(path):
+        opened.append(Database(path))
+        return opened[-1]
+
+    yield factory
+    for database in opened:
+        database.close()
+
+
 def test_message_for_ready_and_failed(monkeypatch):
     monkeypatch.setenv("GITSHIELD_PUBLIC_URL", "http://localhost:8000/")
     ready = {"repo": "acme/app", "pr_number": 7, "pr_title": "Add config", "status": "ready",
@@ -35,7 +49,7 @@ def test_channels_from_env(monkeypatch):
     assert notify.channels() == ["slack", "telegram"]
 
 
-def test_pipeline_notifies_once_unless_disabled(tmp_path, monkeypatch):
+def test_pipeline_notifies_once_unless_disabled(tmp_path, monkeypatch, open_db):
     sent = []
 
     async def fake_send(text):
@@ -44,7 +58,7 @@ def test_pipeline_notifies_once_unless_disabled(tmp_path, monkeypatch):
 
     monkeypatch.setattr(notify, "channels", lambda: ["slack"])
     monkeypatch.setattr(notify, "send", fake_send)
-    db = Database(tmp_path / "t.db")
+    db = open_db(tmp_path / "t.db")
     for flag in (True, False):
         rid = db.create_review("acme/app", 7, "Add config", "abc123", "none", "")
         asyncio.run(run_review(db, FakeGitHub(), None, rid, "acme", "app", 7, notify=flag))

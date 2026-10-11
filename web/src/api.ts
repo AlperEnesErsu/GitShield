@@ -403,7 +403,14 @@ export interface Badge {
   new: boolean;
 }
 
+/** Returned instead of the full object when the server runs with GITSHIELD_GAMIFICATION=off. */
+export interface GamificationOff {
+  enabled: false;
+}
+
+/** The full object carries no `enabled` key (treated as enabled). */
 export interface Gamification {
+  enabled?: true;
   level: number;
   title: string;
   xp: number;
@@ -417,6 +424,8 @@ export interface Gamification {
   new_badges: Badge[];
 }
 
+export type GamificationResponse = GamificationOff | Gamification;
+
 /** Fired after every successful write so progress widgets (streak, badges) can refresh. */
 export const ACTIVITY_EVENT = "gitshield:activity";
 
@@ -426,9 +435,17 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/** Narrows a gamification response to the full object (a missing `enabled` means enabled). */
+export const isGamificationOn = (g: GamificationResponse): g is Gamification => g.enabled !== false;
+
+const UNAUTHORIZED_MESSAGE =
+  "Yetkisiz: GITSHIELD_API_TOKEN tanımlı; arayüzü bir kez /?token=<token> ile aç.";
+
+/** Sends one API call. The HttpOnly `gitshield_token` cookie is attached by the same-origin request. */
+async function send(method: string, path: string, body?: unknown): Promise<Response> {
   const resp = await fetch(`/api${path}`, {
     method,
+    credentials: "same-origin",
     headers: {
       // Required by the server for writes: blocks cross-site (CSRF) requests to the local API.
       "X-GitShield-Client": "web",
@@ -436,6 +453,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+  if (resp.status === 401) throw new ApiError(401, UNAUTHORIZED_MESSAGE);
   if (!resp.ok) {
     let message = resp.statusText;
     try {
@@ -446,6 +464,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
     throw new ApiError(resp.status, message);
   }
+  return resp;
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const resp = await send(method, path, body);
   if (method !== "GET") window.dispatchEvent(new Event(ACTIVITY_EVENT));
   if (resp.status === 204) return undefined as T;
   return resp.json() as Promise<T>;
@@ -455,9 +478,9 @@ const repoPath = (fullName: string) => `/repos/${fullName}`;
 
 export const api = {
   inbox: () => request<Inbox>("GET", "/inbox"),
-  gamification: () => request<Gamification>("GET", "/gamification"),
+  gamification: () => request<GamificationResponse>("GET", "/gamification"),
   markBadgesSeen: () => request<void>("POST", "/gamification/seen"),
-  setDailyGoal: (goal: number) => request<Gamification>("PUT", "/gamification/goal", { goal }),
+  setDailyGoal: (goal: number) => request<GamificationResponse>("PUT", "/gamification/goal", { goal }),
   ciDiagnosis: (repo: string, n: number, opts: { refresh?: boolean; ai?: boolean } = {}) =>
     request<CiDiagnosis>("GET", `${repoPath(repo)}/pulls/${n}/ci-diagnosis?refresh=${!!opts.refresh}&ai=${!!opts.ai}`),
   rerunJob: (repo: string, jobId: number) =>
@@ -473,10 +496,7 @@ export const api = {
   addRule: (repo: string, text: string) => request<MemoryItem>("POST", `${repoPath(repo)}/memory`, { text }),
   patchMemory: (id: number, patch: Partial<Pick<MemoryItem, "text" | "active">>) =>
     request<MemoryItem>("PATCH", `/memory/${id}`, patch),
-  deleteMemory: (id: number) =>
-    fetch(`/api/memory/${id}`, { method: "DELETE", headers: { "X-GitShield-Client": "web" } }).then((r) => {
-      if (!r.ok) throw new ApiError(r.status, r.statusText);
-    }),
+  deleteMemory: (id: number) => send("DELETE", `/memory/${id}`).then(() => undefined),
   suppressComment: (id: number, scope: "file" | "repo") =>
     request<{ memory: MemoryItem; comment: ReviewComment }>("POST", `/comments/${id}/suppress`, { scope }),
   dependencyBatch: (repo: string, numbers: number[], allowMajor = false) =>
