@@ -21,6 +21,7 @@ SEPARATOR_SPLIT = re.compile(r"[_\-.]")
 SHORT_NUMBER = re.compile(r"[0-9]{1,4}")
 WORD_SEGMENT = re.compile(r"[A-Za-z]+")
 LOWER_WORD_SEGMENT = re.compile(r"[a-z_\-.]+")
+CAPITALIZED_WORD = re.compile(r"[A-Z][a-z]{2,}")
 FILE_EXTENSION = re.compile(r"[A-Za-z0-9_\-]+\.[A-Za-z0-9]{1,6}")
 # Text before a quoted value that names a secret-ish variable, key or header
 SECRET_CONTEXT = re.compile(
@@ -92,7 +93,9 @@ def _looks_like_path(token: str) -> bool:
         return False
     if FILE_EXTENSION.fullmatch(segments[-1]):
         return True
-    return all(LOWER_WORD_SEGMENT.fullmatch(s) for s in segments)
+    # Module paths without an extension: "../components/DiffOverview", "@/lib/apiClient".
+    return all(s in (".", "..") or LOWER_WORD_SEGMENT.fullmatch(s) or CAPITALIZED_WORD.fullmatch(s)
+               or _is_word_identifier(s) for s in segments)
 
 
 def _is_word_identifier(token: str) -> bool:
