@@ -101,8 +101,11 @@ def compute_risk(pr: dict[str, Any], review: dict[str, Any] | None = None,
         add(f"{changed} dosyaya yayılıyor", 10)
 
     code_files = [f for f in files if not LOCKFILE.search(f)]
-    for _category, label, points, pattern in SENSITIVE_PATHS:
-        hits = [f for f in code_files if pattern.search(f)]
+    # A test under tests/auth/ exercises auth code; it does not change it.
+    shipped_files = [f for f in code_files if not TEST_PATH.search(f)]
+    for category, label, points, pattern in SENSITIVE_PATHS:
+        # Workflows are often named test.yml, which the test-path pattern would drop.
+        hits = [f for f in (code_files if category == "ci" else shipped_files) if pattern.search(f)]
         if hits:
             add(f"{label} ({hits[0]}{' +' + str(len(hits) - 1) if len(hits) > 1 else ''})", points)
     if files and not code_files:

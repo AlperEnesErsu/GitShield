@@ -71,6 +71,21 @@ def test_file_path_not_flagged():
     assert _tokens('path = "config/settings/production_settings"') == []
 
 
+@pytest.mark.parametrize("line", [
+    'import { DiffOverview } from "../components/DiffOverview";',
+    "import { apiClient } from '@/lib/apiClient';",
+    'export * from "./features/HomeScreen/TodayStatus";',
+])
+def test_module_paths_without_extension_not_flagged(line):
+    assert _tokens(line) == []
+
+
+def test_slash_separated_secrets_are_not_mistaken_for_paths():
+    secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    assert _tokens(f'aws_secret_access_key = "{secret}"') == [secret]
+    assert _tokens('token = "Ab9xQ2/Zk7Lp4Wm/Rt8Yv3Nc6"') == ["Ab9xQ2/Zk7Lp4Wm/Rt8Yv3Nc6"]
+
+
 def test_dotted_identifier_not_flagged():
     assert _tokens('pkg = "com.example.service.handler"') == []
 
