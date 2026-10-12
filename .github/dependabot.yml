@@ -1,16 +1,33 @@
 version: 2
+
+# Updates arrive grouped, so a week brings a few PRs instead of one per package, and packages
+# that only work together (react + react-dom + their types, vite + its React plugin) move in
+# the same PR instead of each failing CI on its own.
 updates:
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "npm"
     directory: "/web"
     schedule:
       interval: "weekly"
+    groups:
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      vite:
+        patterns: ["vite", "@vitejs/*"]
+      web-minor-patch:
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]

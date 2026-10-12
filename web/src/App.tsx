@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { CommandPalette, PaletteButton } from "./components/CommandPalette";
@@ -8,7 +9,7 @@ import { GamificationProvider, ProgressChip, useGamification } from "./gamificat
 import { InboxProvider, useInbox } from "./inbox";
 import { ThemePref, useTheme } from "./theme";
 
-const THEMES: { value: ThemePref; label: string; icon: JSX.Element }[] = [
+const THEMES: { value: ThemePref; label: string; icon: ReactElement }[] = [
   { value: "light", label: "Açık tema", icon: <SunIcon size={15} /> },
   { value: "dark", label: "Koyu tema", icon: <MoonIcon size={15} /> },
   { value: "system", label: "Sistem teması", icon: <MonitorIcon size={15} /> },
