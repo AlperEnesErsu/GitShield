@@ -29,10 +29,10 @@ jobs:
       UV_PYTHON: ${{ matrix.python-version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
         run: uv sync --locked --all-extras
@@ -46,10 +46,10 @@ jobs:
     env:
       UV_PYTHON: "3.12"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
         run: uv sync --locked --all-extras
@@ -67,29 +67,18 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    env:
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install GitShield
-        run: python -m pip install .
-
+      # Runs this repository's own action.yml, so a change to the action (or to an action it
+      # pins) is exercised on the pull request that makes it.
       - name: Scan pull request diff
-        run: gitshield scan --branch "${BASE_SHA}...HEAD" --format sarif --output gitshield.sarif
-
-      # Fork PRs get a read-only token, so the upload would fail; the scan step still gates them.
-      - name: Upload SARIF to code scanning
-        if: always() && hashFiles('gitshield.sarif') != '' && github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@v3
+        uses: ./
         with:
-          sarif_file: gitshield.sarif
+          # Fork PRs get a read-only token, so the upload would fail; the scan still gates them.
+          upload-sarif: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
   web:
     runs-on: ubuntu-latest
@@ -97,8 +86,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm

@@ -5,7 +5,7 @@ description: >-
   GitHub code scanning. Fails the job on HIGH/CRITICAL findings (exit 1) or on
   scan errors (any other non-zero exit).
   Requirements: the caller must check out the repository with full history, e.g.
-  `actions/checkout@v4` with `fetch-depth: 0`, so the base commit is available.
+  `actions/checkout@v7` with `fetch-depth: 0`, so the base commit is available.
   To upload SARIF, the calling job needs `permissions: { contents: read, security-events: write }`.
 
 inputs:
@@ -38,7 +38,7 @@ runs:
   using: "composite"
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -78,7 +78,7 @@ runs:
 
     - name: Upload SARIF to code scanning
       if: always() && inputs.upload-sarif == 'true' && inputs.format == 'sarif' && hashFiles(inputs.output) != ''
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: ${{ inputs.output }}
 
