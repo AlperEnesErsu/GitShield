@@ -7,6 +7,7 @@ import { NextAction, ProcessStepper } from "../components/Process";
 import { RiskPanel } from "../components/insights";
 import { FixDialog } from "../components/FixDialog";
 import { CiDiagnosisCard } from "../components/CiDiagnosis";
+import { DiffOverview, fileAnchor, orderFiles } from "../components/DiffOverview";
 import {
   Badge,
   ErrorBox,
@@ -501,13 +502,20 @@ function DiffView({ pr, comments, onChange, locked }: {
     }
     return map;
   }, [comments]);
+  const files = useMemo(() => orderFiles(pr.files), [pr.files]);
+  const commentCounts = useMemo(
+    () => new Map([...byFile].map(([path, lines]) => [path, [...lines.values()].flat().length])),
+    [byFile],
+  );
 
   return (
     <div className="diff">
-      {pr.files.map((f) => {
+      <DiffOverview files={pr.files} commentCounts={commentCounts} />
+      {files.map((f) => {
         const fileComments = byFile.get(f.path);
         return (
-          <details key={f.path} className="diff-file" open={!!fileComments || pr.files.length <= 5}>
+          <details key={f.path} id={fileAnchor(f.path)} className="diff-file"
+                   open={!!fileComments || pr.files.length <= 5}>
             <summary>
               <span className="mono">{f.path}</span>
               <span className="add small">+{f.additions}</span>

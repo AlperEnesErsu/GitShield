@@ -65,6 +65,15 @@ def test_risk_explains_its_score():
     assert lock_only["level"] == "low", "lockfile churn alone must not look risky"
 
 
+def test_tests_under_sensitive_dirs_are_not_sensitive_code():
+    tests_only = compute_risk(node(4, "feat: home", ["lib/home.dart", "test/features/auth/auth_screens_test.dart"],
+                                   author="alice", assoc="MEMBER"))
+    assert not any("Kimlik doğrulama" in f["label"] for f in tests_only["factors"])
+
+    workflow = compute_risk(node(5, "ci: tweak", [".github/workflows/test.yml"], author="alice", assoc="MEMBER"))
+    assert any("CI/CD" in f["label"] for f in workflow["factors"]), "a workflow named test.yml is still CI"
+
+
 def test_ci_state_mapping():
     assert pr_ci_state(node(1, "t", [], ci="SUCCESS")) == "success"
     assert pr_ci_state(node(1, "t", [], ci="ERROR")) == "failure"

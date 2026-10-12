@@ -7,6 +7,7 @@ pytest.importorskip("fastapi")
 
 from gitshield.web.db import Database
 from gitshield.web.github import GitHubError
+from gitshield.web.llm import LLMUnavailable
 from gitshield.web.review import (
     LLMComment,
     ReviewOutput,
@@ -117,6 +118,14 @@ def test_build_diff_skips_binary_and_budget():
     assert any(s["path"] == "app/config.py" for s in skipped_small)
 
 
+def test_build_diff_keeps_lockfiles_away_from_the_llm():
+    files = [{"filename": "web/package-lock.json", "status": "modified", "patch": PATCH}]
+    raw, annotated, _, skipped = build_diff(files, max_chars=10_000)
+    assert "web/package-lock.json" in raw, "the static scan still reads lockfiles"
+    assert annotated == ""
+    assert skipped[0]["path"] == "web/package-lock.json" and "lockfile" in skipped[0]["reason"]
+
+
 def _run(db, gh, provider):
     review_id = db.create_review("acme/app", 7, PR["title"], "abc123",
                                  provider.name if provider else "none",
@@ -192,6 +201,23 @@ def test_failure_marks_running_step_failed(tmp_path, open_db):
     assert review["status"] == "failed" and review["error"] == "quota exceeded"
     steps = {s["key"]: s["status"] for s in review["progress"]}
     assert steps["scan"] == "done" and steps["ai_review"] == "failed"
+
+
+def test_verifier_outage_keeps_the_review(tmp_path, open_db):
+    class FlakyVerifier(FakeProvider):
+        async def complete(self, system, user, schema):
+            if schema is VerificationOutput:
+                raise LLMUnavailable("Gemini şu an yanıt vermiyor (503)")
+            return await super().complete(system, user, schema)
+
+    db = open_db(tmp_path / "t.db")
+    review = _run(db, FakeGitHub(), FlakyVerifier())
+    assert review["status"] == "ready"
+    steps = {s["key"]: s["status"] for s in review["progress"]}
+    assert steps["verify"] == "skipped"
+    sql = next(c for c in review["comments"] if c["title"] == "SQL injection")
+    assert sql["verification"] == "unverified"
+    assert "Doğrulayıcıya ulaşılamadı" in review["verifier_notes"]
 
 
 def test_interrupted_reviews_are_failed_on_startup(tmp_path, open_db):

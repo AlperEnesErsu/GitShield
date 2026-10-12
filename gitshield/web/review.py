@@ -13,7 +13,8 @@ from gitshield.core.scanner import Scanner
 from gitshield.web.config import settings
 from gitshield.web.db import Database, now
 from gitshield.web.github import GitHubClient, GitHubError
-from gitshield.web.llm import LLMProvider
+from gitshield.web.insights import LOCKFILE
+from gitshield.web.llm import LLMProvider, LLMUnavailable
 from gitshield.web.notify import notify_review
 
 log = logging.getLogger(__name__)
@@ -160,6 +161,10 @@ def build_diff(files: list[dict[str, Any]], max_chars: int):
         raw_parts.append(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{patch}")
         annotated, lines = annotate_patch(patch)
         commentable[path] = lines
+        if LOCKFILE.search(path):
+            # Generated churn: slows the LLM and adds nothing it can review. The static scan still sees it.
+            skipped.append({"path": path, "reason": "lockfile; generated, not sent to the LLM"})
+            continue
         block = f"### {path} ({f.get('status', 'modified')})\n{annotated}\n"
         if used + len(block) > max_chars:
             skipped.append({"path": path, "reason": "diff budget exceeded; not sent to the LLM"})
@@ -522,22 +527,31 @@ async def run_review(db: Database, gh: GitHubClient, provider: LLMProvider | Non
                 f"{memory_text}Pull request #{number}: {pr['title']}\n\n"
                 f"<comments>\n{numbered}\n</comments>\n\n<diff>\n{annotated}\n</diff>"
             )
-            verification = await provider.complete(
-                VERIFY_SYSTEM.format(language=settings.review_language), verify_prompt,
-                VerificationOutput,
-            )
-            recommended = verification.recommended_verdict
-            verifier_notes = verification.notes
-            for item in verification.items:
-                if 0 <= item.index < len(to_verify):
-                    c = to_verify[item.index]
-                    if c["verification"] != "rejected":
-                        c["verification"] = item.status
-                        c["verification_note"] = item.reason
-            counts = {k: sum(1 for c in candidates if c["verification"] == k)
-                      for k in ("confirmed", "uncertain", "rejected")}
-            progress.done("verify", f"{counts['confirmed']} doğrulandı · {counts['uncertain']} belirsiz · "
-                                    f"{counts['rejected']} reddedildi")
+            try:
+                verification = await provider.complete(
+                    VERIFY_SYSTEM.format(language=settings.review_language), verify_prompt,
+                    VerificationOutput,
+                )
+            except LLMUnavailable as e:
+                # The review itself took minutes; a verifier outage must not throw it away. The
+                # comments reach the maintainer marked unverified, and nothing is sent without approval.
+                log.warning("Review %s: verifier unavailable, keeping unverified comments: %s", review_id, e)
+                verification = None
+                verifier_notes = f"Doğrulayıcıya ulaşılamadı ({e}); yorumlar doğrulanmadan listelendi."
+                progress.skip("verify", "Doğrulayıcıya ulaşılamadı; yorumlar doğrulanmadan onayına geldi")
+            if verification is not None:
+                recommended = verification.recommended_verdict
+                verifier_notes = verification.notes
+                for item in verification.items:
+                    if 0 <= item.index < len(to_verify):
+                        c = to_verify[item.index]
+                        if c["verification"] != "rejected":
+                            c["verification"] = item.status
+                            c["verification_note"] = item.reason
+                counts = {k: sum(1 for c in candidates if c["verification"] == k)
+                          for k in ("confirmed", "uncertain", "rejected")}
+                progress.done("verify", f"{counts['confirmed']} doğrulandı · {counts['uncertain']} belirsiz · "
+                                        f"{counts['rejected']} reddedildi")
         elif not to_verify:
             progress.skip("verify", "Doğrulanacak yorum yok")
         else:
