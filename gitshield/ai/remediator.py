@@ -1,12 +1,18 @@
 import functools
 import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 
-from gitshield.ai.prompts import SYSTEM_REMEDIATION_PROMPT, USER_REMEDIATION_TEMPLATE
+from gitshield.ai.prompts import (
+    SYSTEM_REMEDIATION_PROMPT,
+    USER_PATCH_TEMPLATE,
+    USER_REMEDIATION_TEMPLATE,
+)
 from gitshield.core.entropy import find_high_entropy_tokens
 from gitshield.core.models import Finding, RuleType
 from gitshield.rules.engine import RuleEngine
@@ -32,6 +38,7 @@ DEFAULT_MODELS = {
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
+CODE_BLOCK = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
 
 
 class LLMCallError(Exception):
@@ -75,8 +82,18 @@ def _resolve_provider(explicit: str | None, api_key: str | None) -> str | None:
     return None
 
 
-def _read_surrounding_lines(repo_path: Path, finding: Finding) -> str | None:
-    """Return the lines around the finding from the file on disk, marking the finding line."""
+@dataclass
+class FixProposal:
+    """An LLM suggestion as a line-range replacement of `original`, starting at 1-based line `start`."""
+
+    start: int
+    original: list[str]
+    replacement: list[str]
+    explanation: str
+
+
+def _read_window(repo_path: Path, finding: Finding) -> tuple[int, list[str]] | None:
+    """(0-based start index, lines) of the window around the finding, read from the file on disk."""
     try:
         root = repo_path.resolve()
         target = (root / finding.file_path).resolve()
@@ -90,8 +107,37 @@ def _read_surrounding_lines(repo_path: Path, finding: Finding) -> str | None:
     if not 0 <= idx < len(lines):
         return None
     start = max(0, idx - CONTEXT_RADIUS)
-    end = min(len(lines), idx + CONTEXT_RADIUS + 1)
-    return "\n".join((">> " if i == idx else "   ") + lines[i] for i in range(start, end))
+    return start, lines[start : min(len(lines), idx + CONTEXT_RADIUS + 1)]
+
+
+def _read_surrounding_lines(repo_path: Path, finding: Finding) -> str | None:
+    """Return the lines around the finding from the file on disk, marking the finding line."""
+    window = _read_window(repo_path, finding)
+    if window is None:
+        return None
+    start, lines = window
+    idx = finding.line_number - 1
+    return "\n".join((">> " if start + i == idx else "   ") + line for i, line in enumerate(lines))
+
+
+def _redact_line(line: str, finding: Finding) -> str:
+    safe = redact_secrets(line)
+    if finding.rule_type in SECRET_TYPES and finding.matched_text:
+        safe = safe.replace(finding.matched_text, REDACTED)
+    return safe
+
+
+def _restore_redacted(replacement: list[str], original: list[str], redacted: list[str]) -> list[str] | None:
+    """Put the real text back into lines the model kept unchanged; None if a placeholder is left over."""
+    originals = {r: o for r, o in zip(redacted, original, strict=True) if r != o}
+    restored = []
+    for line in replacement:
+        if REDACTED in line:
+            if line not in originals:
+                return None
+            line = originals[line]
+        restored.append(line)
+    return restored
 
 
 def _text_from_parts(parts: Any) -> str:
@@ -122,10 +168,9 @@ class AIRemediator:
         fallback = finding.suggested_fix or DEFAULT_ADVICE
         if not self.provider:
             return fallback
-        if self.provider not in PROVIDERS:
-            return self._fallback(f"unsupported LLM_PROVIDER '{self.provider}'", fallback)
-        if not self.api_key:
-            return self._fallback(f"{KEY_ENV[self.provider]} is not set", fallback)
+        problem = self._config_problem()
+        if problem:
+            return self._fallback(problem, fallback)
 
         user = USER_REMEDIATION_TEMPLATE.format(
             file_path=finding.file_path,
@@ -140,6 +185,55 @@ class AIRemediator:
             return self._complete(SYSTEM_REMEDIATION_PROMPT, user)
         except LLMCallError as e:
             return self._fallback(str(e), fallback)
+
+    def _config_problem(self) -> str | None:
+        if not self.provider:
+            return "no LLM provider configured (set ANTHROPIC_API_KEY, GEMINI_API_KEY or OPENAI_API_KEY)"
+        if self.provider not in PROVIDERS:
+            return f"unsupported LLM_PROVIDER '{self.provider}'"
+        if not self.api_key:
+            return f"{KEY_ENV[self.provider]} is not set"
+        return None
+
+    def propose_patch(self, finding: Finding, repo_path: Path) -> FixProposal | str:
+        """Ask for a replacement of the lines around the finding; returns the reason on failure.
+
+        The model only sees redacted lines. Lines it keeps unchanged get their real text back;
+        a proposal that would write a <REDACTED_SECRET> placeholder into the file is refused.
+        """
+        problem = self._config_problem()
+        if problem:
+            return problem
+        window = _read_window(repo_path, finding)
+        if window is None:
+            return "the finding's line could not be read from the file"
+        start, original = window
+        redacted = [_redact_line(line, finding) for line in original]
+        user = USER_PATCH_TEMPLATE.format(
+            file_path=finding.file_path,
+            line_number=finding.line_number,
+            rule_id=finding.rule_id,
+            title=finding.title,
+            severity=finding.severity.value,
+            cwe=finding.cwe or "N/A",
+            start=start + 1,
+            end=start + len(original),
+            offset=finding.line_number - start,
+            context="\n".join(redacted).replace("</code>", "&lt;/code&gt;"),
+        )
+        try:
+            answer = self._complete(SYSTEM_REMEDIATION_PROMPT, user)
+        except LLMCallError as e:
+            return self._fallback(str(e), "fix it by hand")
+        block = CODE_BLOCK.search(answer)
+        if block is None:
+            return "the model's answer had no code block to apply"
+        code = block.group(1).removesuffix("\n")
+        restored = _restore_redacted(code.split("\n"), original, redacted)
+        if restored is None:
+            return "the suggestion changes a line that holds a redacted secret; fix it by hand"
+        explanation = (answer[: block.start()] + answer[block.end() :]).strip()
+        return FixProposal(start=start + 1, original=original, replacement=restored, explanation=explanation)
 
     def _fallback(self, reason: str, fallback: str) -> str:
         reason = reason.replace(self.api_key, "<redacted>") if self.api_key else reason

@@ -73,12 +73,21 @@ def filter_baselined(
     return kept, len(findings) - len(kept)
 
 
-def write_baseline(path: Path, findings: list[Finding], repo_path: Path | None = None) -> tuple[int, int]:
+def write_baseline(
+    path: Path,
+    findings: list[Finding],
+    repo_path: Path | None = None,
+    fingerprints: list[str] | None = None,
+) -> tuple[int, int]:
     """Merge findings into the baseline file (existing entries are kept); return (added, total).
 
     Merging matters because most scans see only a diff: rewriting the file from one scan would
     drop every accepted finding outside that diff. Delete the file to start over.
+    Pass fingerprints (computed over the whole scan) when findings is a subset of it, so
+    repeated identical lines keep the occurrence index they have in the full report.
     """
+    if fingerprints is None:
+        fingerprints = fingerprint_findings(findings, repo_path)
     entries: dict[str, dict[str, str]] = {}
     if path.is_file():
         load_baseline(path)  # validate before rewriting
@@ -86,7 +95,7 @@ def write_baseline(path: Path, findings: list[Finding], repo_path: Path | None =
             if isinstance(e, dict) and isinstance(e.get("fingerprint"), str):
                 entries[e["fingerprint"]] = e
     before = len(entries)
-    for f, fp in zip(findings, fingerprint_findings(findings, repo_path), strict=True):
+    for f, fp in zip(findings, fingerprints, strict=True):
         entries.setdefault(
             fp,
             {

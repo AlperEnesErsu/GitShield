@@ -91,6 +91,9 @@ gitshield scan --branch main...HEAD
 # Bulgular için LLM düzeltme önerisi üret
 gitshield scan --fix
 
+# Bulguları tek tek gez: öneriyi diff olarak gör, uygula / atla / baseline'a ekle
+gitshield scan --interactive
+
 # Yalnızca değişiklikleri değil, depodaki tüm izlenen satırları tara
 gitshield scan --all
 
@@ -120,6 +123,7 @@ gitshield scan --format json > results.json
 | `--no-entropy` | Entropi sezgisini kapat; yalnızca regex kuralları çalışır. |
 | `--rules-dir DIZIN` | Dizindeki `*.yaml` kural dosyalarını yerleşik kurallara **ekler** (yerleşik kurallar değiştirilmez). |
 | `-f, --fix` | Bulgular için LLM düzeltme önerisi üretir. |
+| `-i, --interactive` | Bulguları tek tek inceler: LLM önerisini diff olarak gösterir; uygula, atla, baseline'a ekle veya çık. Yalnızca `console` biçimiyle çalışır. |
 | `--format console\|sarif\|json` | Çıktı biçimi. Varsayılan: `console`. |
 | `-o, --output DOSYA` | Raporu dosyaya yazar (`sarif` / `json`). Verilmezse `sarif` ve `json` stdout'a basılır. |
 | `--fail-on-critical / --no-fail` | Varsayılan açık: HIGH veya CRITICAL bulgu varsa çıkış kodu 1. `--no-fail` ile kapatılır. |
@@ -180,6 +184,23 @@ git add .gitshield-baseline.json         # dosyayı inceleyip commit'leyin
 - Dosyada eşleşen metin veya sır **yoktur**; yalnızca parmak izi, kural kimliği, dosya yolu ve önem tutulur.
 - `--update-baseline` mevcut kayıtları korur ve yenilerini ekler (diff taramaları deponun yalnızca bir kısmını gördüğü için dosya baştan yazılmaz). Düzeltilmiş bulguların kayıtlarını temizlemek için dosyayı silip yeniden oluşturun.
 - CLI dosyayı otomatik okur; `--baseline DOSYA` ile başka bir yol, `--no-baseline` ile tüm bulgular. Bozuk veya bilinmeyen sürümlü bir baseline dosyası çıkış kodu 2 verir. GitHub Action da depoda commit'lenmiş baseline dosyasını kullanır.
+
+#### Etkileşimli düzeltme (`--interactive`)
+
+`gitshield scan --interactive` önce raporu gösterir, sonra her bulgu için LLM'den bulgunun çevresindeki satırların (±8) yerine geçecek bir öneri ister ve bunu renkli bir diff olarak gösterir. Her bulgu için seçim yapılır:
+
+| Tuş | Ne yapar |
+|---|---|
+| `a` | Öneriyi dosyaya yazar (satır sonları korunur). Yalnızca uygulanabilir bir öneri varsa sunulur. |
+| `s` | Bulguyu olduğu gibi bırakır (varsayılan). |
+| `b` | Bulguyu baseline dosyasına ekler (oturum sonunda yazılır). |
+| `q` | Kalan bulguları incelemeden çıkar. |
+
+- LLM yalnızca sırları `<REDACTED_SECRET>` ile değiştirilmiş satırları görür. Değiştirmediği satırlar dosyaya gerçek içerikleriyle geri yazılır; yer tutucuyu dosyaya yazacak bir öneri reddedilir ve elle düzeltmeniz istenir. Diff önizlemesinde de sırlar maskelenir.
+- Öneri hazırlandıktan sonra dosya değiştiyse uygulanmaz. Aynı dosyada önceki bir düzeltme satırları kaydırdıysa sonraki bulgular yeni konumlarında aranır; önceki düzeltmenin yeniden yazdığı satırdaki bulgu atlanır ve yeniden tarama önerilir.
+- LLM anahtarı yoksa öneri üretilmez; yine de bulguları atlayabilir veya baseline'a ekleyebilirsiniz.
+- Uygulanan düzeltmeler **test edilmez**; değişikliği inceleyip `gitshield scan` ile yeniden tarayın.
+- Çıkış kodu: atlanan veya incelenmeyen bir HIGH/CRITICAL bulgu kalırsa 1, aksi halde 0 (`--no-fail` ile her zaman 0).
 
 #### Yerleşik kurallar
 
@@ -391,8 +412,9 @@ GitShield/
 │   │   ├── secrets.yaml      # 20 sır kuralı
 │   │   └── owasp.yaml        # 6 OWASP kuralı
 │   ├── ai/
-│   │   ├── remediator.py     # CLI --fix: LLM çağrısı, sır redaksiyonu
+│   │   ├── remediator.py     # CLI --fix / --interactive: LLM çağrısı, sır redaksiyonu, satır aralığı önerisi
 │   │   └── prompts.py        # Düzeltme prompt şablonları
+│   ├── interactive.py        # --interactive: diff önizleme, uygula / atla / baseline döngüsü
 │   ├── formatters/
 │   │   ├── console.py        # Rich terminal çıktısı
 │   │   └── sarif.py          # SARIF 2.1.0 üretici
@@ -429,7 +451,7 @@ CI (`.github/workflows/ci.yml`) testleri Ubuntu'da Python 3.11–3.13, Windows't
 - [x] **Faz 1:** Proje iskeleti, git diff ayrıştırıcı (tırnak/escape'li yollar, untracked dosyalar), Shannon entropi motoru.
 - [x] **Faz 2:** YAML kural motoru: 26 yerleşik kural, dosya kapsamı, satır içi bastırma, özel kural dizini, yer tutucu değer filtresi.
 - [x] **Faz 3:** LLM düzeltme önerisi (CLI `--fix`; Anthropic, Gemini, OpenAI) ve web panelinde önizlemeli düzeltme PR'ı.
-- [x] **Faz 4:** Rich terminal görselleştirmesi. *(`--interactive` düzeltme modu henüz yok; aşağıya bakın.)*
+- [x] **Faz 4:** Rich terminal görselleştirmesi ve `--interactive` düzeltme modu.
 - [x] **Faz 5:** GitHub Action (`action.yml`): PR diff'ini tarar, SARIF'i Code Scanning'e yükler. Satır içi PR yorumları web panelinde.
 - [x] **Faz 6:** SARIF 2.1.0 çıktısı (`partialFingerprints` ve `security-severity` ile) ve GitHub Code Scanning entegrasyonu.
 
@@ -437,7 +459,6 @@ CI (`.github/workflows/ci.yml`) testleri Ubuntu'da Python 3.11–3.13, Windows't
 - [ ] Satır bazlı regex yerine AST tabanlı analiz (ör. Python `ast` ile girdi-çıktı akışı) ve daha az yanlış pozitif.
 - [ ] Sır canlılık doğrulaması: sızan bir anahtarın hâlâ geçerli olup olmadığını sağlayıcı API'si üzerinden kontrol etmek.
 - [x] Baseline dosyası: mevcut bulguları kabul edip yalnızca yeni bulguları raporlamak (`--update-baseline`, `--all`).
-- [ ] Faz 4'ten kalan `--interactive` düzeltme modu.
 - [ ] OWASP kurallarının Go, Java, PHP ve Ruby gibi diğer dillere genişletilmesi.
 - [ ] Tedarik zinciri kuralları: `RuleType.DEPENDENCY` tanımlı, ancak henüz hiçbir yerleşik kural kullanmıyor.
 
