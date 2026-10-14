@@ -104,6 +104,13 @@ Geleneksel SAST çözümleri genellikle tüm kod tabanını tarar ve geliştiric
 - **Dosya bazlı yoksayma:** `load_ignore_file` depo kökündeki `.gitshieldignore` desenlerini okur; `Scanner(ignore_patterns=...)` eşleşen dosyaları taramadan atlar (sonda `/` dizin öneki, başta `**/` kökü de kapsar, `/` içermeyen desen dosya adıyla eşleşir). CLI dosyayı otomatik yükler (`--no-ignore-file` ile kapatılır); web review hattı varsayılan `Scanner()` ile yoksayma uygulamaz.
 - Rapor; taranan dosya sayısı, taranan eklenen satır sayısı ve süre bilgilerini taşır.
 
+### 4.4.1. Baseline (`core/baseline.py`)
+
+- **Parmak izi:** `sha256(rule_id | depo-göreli yol | boşlukları normalize edilmiş satır | tekrar sırası)`. Satır numarası bilerek dışarıda; ilgisiz düzenlemeler satırı kaydırınca kayıt geçerli kalır. Tekrar sırası, aynı dosyadaki birebir aynı satırların ayrı sayılmasını sağlar. SARIF `primaryLocationLineHash`'ten farkı: sır redakte edilmeden hash'lenir, böylece aynı satırda sırrın değiştirilmesi yeni bulgu olur. Dosyada yalnızca hash tutulur.
+- **Yazma birleştirir:** `--update-baseline` mevcut kayıtları korur; tek bir diff taraması deponun tamamını görmediği için dosyayı baştan yazmak kabul edilmiş bulguları düşürürdü. Kayıtlar dosya yolu ve kurala göre sıralanır, böylece incelemede diff okunur kalır.
+- **Uygulama yeri:** CLI, satır içi bastırma ve `.gitshieldignore`'dan sonra, `--fix` ve raporlamadan önce süzer; baseline'daki bulgular için LLM çağrısı yapılmaz ve çıkış kodunu etkilemez. Web review hattı baseline uygulamaz.
+- **`--all`:** Çalışma ağacını boş ağaçla (`EMPTY_TREE`) karşılaştırır; tüm izlenen satırlar eklenmiş sayılır. Baseline'ı ilk kez oluşturmak için kullanılır.
+
 ### 4.5. Düzeltme Önerisi (`ai/remediator.py`, CLI `--fix`)
 
 - Sağlayıcılar: `anthropic`, `gemini`, `openai`. Seçim: `LLM_PROVIDER`, yoksa API anahtarı bulunan ilk sağlayıcı. Model: `LLM_MODEL` veya sağlayıcı varsayılanı.
@@ -227,4 +234,4 @@ GitHub Action bu kodları ayırt eder: `1` job'u başarısız yapar, `2` ve diğ
 - **Tedarik zinciri:** `DEPENDENCY` türü tanımlıdır ama kural yoktur.
 - **Doğrulama yok:** Bulunan sırların canlı olup olmadığı kontrol edilmez.
 - **Düzeltmeler:** `--fix` çıktısı öneridir; uygulanmaz ve test edilmez.
-- **Kapsam dışı:** Baseline mekanizması henüz yoktur; bastırma satır içi yorumla ya da `.gitshieldignore` ile dosya bazında yapılır.
+- **Baseline:** Yalnızca CLI'da (ve dolayısıyla GitHub Action'da) uygulanır; web review hattı baseline okumaz. Düzeltilen bulguların kayıtları otomatik temizlenmez.

@@ -8,6 +8,12 @@ from rich.console import Console
 
 from gitshield import __version__
 from gitshield.ai.remediator import AIRemediator
+from gitshield.core.baseline import (
+    BASELINE_FILE_NAME,
+    filter_baselined,
+    load_baseline,
+    write_baseline,
+)
 from gitshield.core.diff_parser import get_git_diff
 from gitshield.core.models import ScanReport
 from gitshield.core.scanner import Scanner, load_ignore_file
@@ -51,6 +57,11 @@ def scan(
         "-b",
         help="Compare against branch or commit reference (e.g. main..HEAD).",
     ),
+    all_files: bool = typer.Option(
+        False,
+        "--all",
+        help="Scan every tracked line in the working tree, not just changes (e.g. to create a baseline).",
+    ),
     no_entropy: bool = typer.Option(
         False,
         "--no-entropy",
@@ -65,6 +76,21 @@ def scan(
         False,
         "--no-ignore-file",
         help="Do not apply the repo's .gitshieldignore file.",
+    ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help=f"Baseline file of accepted findings. Default: {BASELINE_FILE_NAME} in the repo root.",
+    ),
+    no_baseline: bool = typer.Option(
+        False,
+        "--no-baseline",
+        help="Report every finding, including those accepted in the baseline.",
+    ),
+    update_baseline: bool = typer.Option(
+        False,
+        "--update-baseline",
+        help="Add this scan's findings to the baseline file and exit 0 instead of reporting them.",
     ),
     rules_dir: Path | None = typer.Option(
         None,
@@ -103,11 +129,19 @@ def scan(
         err_console.print(f"[bold red]Unknown format:[/bold red] {format}. Use one of: console, sarif, json.")
         raise typer.Exit(code=EXIT_ERROR)
 
+    if all_files and (staged or branch):
+        err_console.print("[bold red]--all cannot be combined with --staged or --branch.[/bold red]")
+        raise typer.Exit(code=EXIT_ERROR)
+    if update_baseline and no_baseline:
+        err_console.print("[bold red]--update-baseline cannot be combined with --no-baseline.[/bold red]")
+        raise typer.Exit(code=EXIT_ERROR)
+
     # Machine-readable output without --output goes to stdout; keep status text on stderr
     stdout_report = format != "console" and output is None
     log = err_console if stdout_report else console
 
     repo_path = path.resolve()
+    baselined = 0
     try:
         ignore_patterns = [] if no_ignore_file else load_ignore_file(repo_path)
         scanner = Scanner(RuleEngine(custom_rules_dir=rules_dir), ignore_patterns=ignore_patterns)
@@ -116,17 +150,34 @@ def scan(
             staged=staged,
             branch_or_commit=branch,
             include_untracked=not no_untracked,
+            all_files=all_files,
         )
         report = scanner.scan_diff(
             repo_path=repo_path,
             raw_diff=raw_diff,
             staged=staged,
-            branch_or_commit=branch,
+            branch_or_commit="all" if all_files else branch,
             enable_entropy=not no_entropy,
         )
+        baseline_path = baseline or repo_path / BASELINE_FILE_NAME
+        if update_baseline:
+            added, total = write_baseline(baseline_path, report.findings, repo_path=repo_path)
+        elif not no_baseline:
+            report.findings, baselined = filter_baselined(
+                report.findings, load_baseline(baseline_path), repo_path=repo_path
+            )
     except Exception as e:  # GitDiffError or any other failure: exit 2 so CI can tell it apart
         err_console.print(f"[bold red]Scan failed:[/bold red] {e}")
         raise typer.Exit(code=EXIT_ERROR) from e
+
+    if update_baseline:
+        err_console.print(
+            f"[bold green]✔ Baseline {baseline_path}:[/bold green] {added} finding(s) added, {total} total. "
+            "Review and commit it; only findings outside it will be reported."
+        )
+        return
+    if baselined:
+        log.print(f"[dim]{baselined} finding(s) accepted in the baseline were not reported (--no-baseline shows them).[/dim]")
 
     if fix and report.findings:
         remediator = AIRemediator()
