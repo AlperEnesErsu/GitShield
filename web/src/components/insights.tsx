@@ -21,6 +21,19 @@ export function RiskBadge({ risk }: { risk: Risk | null | undefined }) {
   );
 }
 
+/** Risk as a word ("Orta risk") for lists; the score and its factors stay in the tooltip. */
+export function RiskWord({ risk }: { risk: Risk | null | undefined }) {
+  if (!risk) return null;
+  const [tone, label] = LEVEL[risk.level];
+  const why = risk.factors.map((f) => `+${f.points} ${f.label}`).join("\n") || "Risk faktörü yok";
+  return (
+    <span className={`risk-word risk-word-${tone}`} title={`Risk puanı ${risk.score}/100\n${why}`}>
+      <span className="risk-word-dot" aria-hidden />
+      {label} risk
+    </span>
+  );
+}
+
 const CI: Record<CiState, [string, string, string]> = {
   success: ["success", "✓", "CI başarılı"],
   failure: ["critical", "✕", "CI başarısız"],
