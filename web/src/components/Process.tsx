@@ -1,4 +1,3 @@
-import { ReactNode } from "react";
 import type { ProgressStep, Review, StepStatus } from "../api";
 
 const DESCRIPTIONS: Record<ProgressStep["key"], string> = {
@@ -46,12 +45,6 @@ function StepIcon({ status, index }: { status: StepStatus; index: number }) {
       return <span aria-hidden>{index + 1}</span>;
   }
 }
-
-const VERDICT_TEXT: Record<Review["verdict"], string> = {
-  APPROVE: "Onay",
-  REQUEST_CHANGES: "Değişiklik iste",
-  COMMENT: "Yorum",
-};
 
 const STATUS_LABEL: Record<StepStatus, string> = {
   pending: "bekliyor",
@@ -110,71 +103,6 @@ export function ProcessStepper({ review }: { review?: Review | null }) {
           );
         })}
       </ol>
-    </div>
-  );
-}
-
-/** One-line guidance for what the user should do next, derived from the review state. */
-export function NextAction({ review, onStart, onRetry, starting, action }: {
-  review: Review | null | undefined;
-  onStart: () => void;
-  onRetry: () => void;
-  starting: boolean;
-  action?: ReactNode;
-}) {
-  let tone = "info";
-  let title: ReactNode;
-  let body: ReactNode;
-  let button: ReactNode = action;
-
-  if (!review) {
-    title = "Bu PR henüz incelenmedi";
-    body = "İncelemeyi başlat; tarama, AI review ve doğrulama otomatik çalışır, sonra senin onayına gelir.";
-    button = (
-      <button className="btn btn-primary" onClick={onStart} disabled={starting}>
-        {starting ? <span className="spinner" /> : "İncelemeyi başlat"}
-      </button>
-    );
-  } else if (review.status === "running") {
-    const current = review.progress?.find((s) => s.status === "running");
-    title = current ? `${current.label} sürüyor…` : "İnceleme sürüyor…";
-    body = current?.detail || "Bu sayfa kendiliğinden güncellenir; beklemen yeterli.";
-    button = null;
-  } else if (review.status === "failed") {
-    tone = "critical";
-    title = "İnceleme yarıda kaldı";
-    body = review.error;
-    button = (
-      <button className="btn" onClick={onRetry} disabled={starting}>
-        {starting ? <span className="spinner" /> : "Yeniden dene"}
-      </button>
-    );
-  } else if (review.status === "ready") {
-    const included = review.comments.filter((c) => c.included).length;
-    const verdict = VERDICT_TEXT[review.verdict];
-    tone = "accent";
-    if (included === 0) {
-      title = "Sıra sende: özeti kontrol et ve gönder";
-      body = `Sorun bulunmadı; önerilen karar “${verdict}”. Özeti okuyup uygunsa aşağıdan GitHub'a gönder.`;
-    } else {
-      title = "Sıra sende: yorumları gözden geçir";
-      body = `${included} yorum gönderime hazır, önerilen karar “${verdict}”. Reddedilenler hariç tutuldu; istersen düzenle, sonra GitHub'a gönder.`;
-    }
-  } else {
-    tone = "success";
-    title = "Süreç tamamlandı";
-    body = review.stats.drafts_created
-      ? `Review PR'a gönderildi. ${review.stats.drafts_created} bulgu, repo sayfasında taslak issue olarak bekliyor.`
-      : "Review PR'a gönderildi.";
-  }
-
-  return (
-    <div className={`next-action next-${tone}`}>
-      <div className="next-text">
-        <div className="next-title">{title}</div>
-        {body && <div className="next-body">{body}</div>}
-      </div>
-      {button}
     </div>
   );
 }

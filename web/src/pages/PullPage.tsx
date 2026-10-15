@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, Followup, PullDetail, Review, ReviewComment, Verdict, Verification } from "../api";
+import { api, Followup, PullDetail, Review, ReviewComment, Severity, Verdict, Verification } from "../api";
 import { ChartCard, CompositionBar, Series, StackedBarList } from "../components/charts";
 import { ExternalIcon } from "../components/icons";
-import { NextAction, ProcessStepper } from "../components/Process";
-import { RiskPanel } from "../components/insights";
+import { ProcessStepper } from "../components/Process";
+import { RiskPanel, RiskWord } from "../components/insights";
 import { FixDialog } from "../components/FixDialog";
 import { CiDiagnosisCard } from "../components/CiDiagnosis";
 import { DiffOverview, fileAnchor, orderFiles } from "../components/DiffOverview";
 import {
   Badge,
+  Collapsible,
   ErrorBox,
   Loading,
   SeverityBadge,
@@ -75,6 +76,12 @@ export function PullPage() {
   const current = reviewId === null ? null : r;
   const canRerun = p.state === "open" && current?.status !== "running";
 
+  const findings = current?.comments.filter((c) => c.verification !== "rejected") ?? [];
+  const showFindings = () => {
+    setTab("review");
+    requestAnimationFrame(() => document.getElementById("findings")?.scrollIntoView({ behavior: "smooth" }));
+  };
+
   return (
     <div className="page">
       <nav className="crumbs">
@@ -83,44 +90,38 @@ export function PullPage() {
       </nav>
       <div className="page-head">
         <div>
-          <p className="eyebrow">Pull request #{p.number}</p>
           <h1>{p.title}</h1>
           <div className="meta-row">
-            <span><strong className="text-2">{p.author}</strong></span>
-            <span className="mono">{p.head_ref} → {p.base_ref}</span>
+            <span>{p.author} · #{p.number}</span>
             {p.draft && <Badge tone="muted">taslak</Badge>}
-            <span>{p.changed_files} dosya · <span className="add">+{p.additions}</span>{" "}
-              <span className="del">−{p.deletions}</span></span>
+            <span>{p.changed_files} dosya değişti</span>
           </div>
         </div>
         <div className="head-actions">
-          <a className="btn" href={p.url} target="_blank" rel="noreferrer">GitHub <ExternalIcon size={14} /></a>
-          {current && (
-            <>
-              <button className="btn" onClick={() => start(true)} disabled={starting || !canRerun}
-                      title="Önceki review'ları yok sayıp tüm PR diff'ini baştan incele">
-                Baştan incele
-              </button>
-              <button className="btn" onClick={() => start()} disabled={starting || !canRerun}
-                      title="Yeni commit varsa yalnızca son incelenen commit'ten sonraki değişiklikleri incele">
-                {starting ? <span className="spinner" /> : "Yeniden incele"}
-              </button>
-            </>
-          )}
+          <a className="btn btn-ghost" href={p.url} target="_blank" rel="noreferrer">GitHub'da aç <ExternalIcon size={14} /></a>
         </div>
       </div>
       {startError && <ErrorBox error={startError} />}
 
-      <section className="process-card">
-        <div className="process-head">
-          <h2>
-            Süreç
-            {current?.mode === "incremental" && current.base_sha && (
-              <Badge tone="info" title="Yalnızca son incelenen commit'ten sonraki değişiklikler incelendi">
-                Artımlı · {current.base_sha.slice(0, 7)} → {current.head_sha.slice(0, 7)}
-              </Badge>
-            )}
-          </h2>
+      <ResultCard pr={p} review={current ?? null} findings={findings} starting={starting}
+                  onStart={() => start()} onShowFindings={showFindings} />
+
+      {p.ci === "failure" && <CiDiagnosisCard repo={fullName} number={p.number} headSha={p.head_sha} />}
+
+      {review.error && <ErrorBox error={review.error} onRetry={review.reload} />}
+
+      <div className="tabs" role="tablist" id="findings">
+        <button role="tab" aria-selected={tab === "review"} className={tab === "review" ? "active" : ""}
+                onClick={() => setTab("review")}>Bulgular{current ? ` (${findings.length})` : ""}</button>
+        <button role="tab" aria-selected={tab === "diff"} className={tab === "diff" ? "active" : ""}
+                onClick={() => setTab("diff")}>Kod değişiklikleri ({p.files.length})</button>
+      </div>
+
+      <ReviewPanel review={current ?? null} loading={reviewId !== null && !r} pr={p} tab={tab}
+                   setReview={(next) => review.setData(() => next)} onSubmitted={pr.reload} />
+
+      <Collapsible title="Ayrıntılar" hint="İnceleme adımları, risk puanının dökümü, yorum hunisi, önceki review'lar">
+        <div className="details-actions">
           {p.reviews.length > 1 && (
             <select className="input select" value={reviewId ?? ""} aria-label="Review seç"
                     onChange={(e) => setReviewId(Number(e.target.value))}>
@@ -131,27 +132,138 @@ export function PullPage() {
               ))}
             </select>
           )}
+          {current?.mode === "incremental" && current.base_sha && (
+            <Badge tone="info" title="Yalnızca son incelenen commit'ten sonraki değişiklikler incelendi">
+              Artımlı · {current.base_sha.slice(0, 7)} → {current.head_sha.slice(0, 7)}
+            </Badge>
+          )}
+          <span className="mono small muted">{p.head_ref} → {p.base_ref} · +{p.additions} −{p.deletions}</span>
+          {current && (
+            <button className="btn btn-sm" onClick={() => start(true)} disabled={starting || !canRerun}
+                    title="Önceki review'ları yok sayıp tüm PR diff'ini baştan incele">
+              Baştan incele
+            </button>
+          )}
         </div>
         <ProcessStepper review={current} />
-        <NextAction review={current} onStart={() => start()} onRetry={() => start()} starting={starting} />
-      </section>
-
-      <RiskPanel risk={p.risk} ci={p.ci} />
-
-      {p.ci === "failure" && <CiDiagnosisCard repo={fullName} number={p.number} headSha={p.head_sha} />}
-
-      {review.error && <ErrorBox error={review.error} onRetry={review.reload} />}
-
-      <div className="tabs" role="tablist">
-        <button role="tab" aria-selected={tab === "review"} className={tab === "review" ? "active" : ""}
-                onClick={() => setTab("review")}>Review</button>
-        <button role="tab" aria-selected={tab === "diff"} className={tab === "diff" ? "active" : ""}
-                onClick={() => setTab("diff")}>Diff ({p.files.length})</button>
-      </div>
-
-      <ReviewPanel review={current ?? null} loading={reviewId !== null && !r} pr={p} tab={tab}
-                   setReview={(next) => review.setData(() => next)} onSubmitted={pr.reload} />
+        <RiskPanel risk={p.risk} ci={p.ci} />
+        {(current?.status === "ready" || current?.status === "submitted") && <FunnelCard review={current} />}
+      </Collapsible>
     </div>
+  );
+}
+
+const SEVERITY_ORDER: Severity[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+const SEVERITY_WORD: Record<Severity, string> = {
+  CRITICAL: "kritik", HIGH: "yüksek", MEDIUM: "orta", LOW: "düşük", INFO: "bilgi",
+};
+const CI_WORD: Record<PullDetail["ci"], string | null> = {
+  success: "CI geçti", failure: "CI başarısız", pending: "CI sürüyor", none: null,
+};
+
+/** The top of the PR page: what GitShield found, and the one thing to do next. */
+function ResultCard({ pr, review, findings, starting, onStart, onShowFindings }: {
+  pr: PullDetail;
+  review: Review | null;
+  findings: ReviewComment[];
+  starting: boolean;
+  onStart: () => void;
+  onShowFindings: () => void;
+}) {
+  const sorted = [...findings].sort(
+    (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
+  );
+  const serious = findings.filter((c) => c.severity === "CRITICAL" || c.severity === "HIGH").length;
+  const bySeverity = SEVERITY_ORDER.map((s) => [s, findings.filter((c) => c.severity === s).length] as const)
+    .filter(([, n]) => n > 0);
+  const outdated = !!review && review.head_sha !== pr.head_sha && pr.state === "open";
+  const busyButton = (label: string, primary = true) => (
+    <button className={`btn ${primary ? "btn-primary" : ""}`} onClick={onStart} disabled={starting}>
+      {starting ? <span className="spinner" /> : label}
+    </button>
+  );
+
+  let tone = "neutral";
+  let headline: string;
+  let todo: string;
+  let action: ReactNode = null;
+
+  if (!review) {
+    headline = "Bu PR henüz incelenmedi";
+    todo = "İncelemeyi başlat. Güvenlik taraması, AI review ve doğrulama kendiliğinden çalışır; bitince sonuç burada görünür.";
+    action = pr.state === "open" ? busyButton("İncelemeyi başlat") : null;
+  } else if (review.status === "running") {
+    tone = "info";
+    const step = review.progress?.find((s) => s.status === "running");
+    headline = step ? `İnceleniyor: ${step.label}` : "İnceleniyor";
+    todo = "Beklemen yeterli; sayfa kendiliğinden güncellenir.";
+  } else if (review.status === "failed") {
+    tone = "critical";
+    headline = "İnceleme tamamlanamadı";
+    todo = review.error ?? "Bilinmeyen bir hata oluştu.";
+    action = busyButton("Yeniden dene", false);
+  } else {
+    tone = findings.length === 0 ? "success" : serious ? "critical" : "medium";
+    headline = findings.length === 0
+      ? "Sorun bulunmadı"
+      : `${findings.length} sorun bulundu${serious ? ` — ${serious} tanesi yüksek önemde` : ""}`;
+    if (outdated) {
+      todo = "Bu sonuç eski bir commit için. PR'a yeni commit geldi; yeniden incelemek gerekiyor.";
+      action = busyButton("Yeniden incele");
+    } else if (review.status === "submitted") {
+      todo = `Yapacak bir şey yok: review ${timeAgo(review.submitted_at)} GitHub'a gönderildi.`;
+      action = review.github_review_url ? (
+        <a className="btn" href={review.github_review_url} target="_blank" rel="noreferrer">GitHub'da gör ↗</a>
+      ) : null;
+    } else if (findings.length === 0) {
+      todo = "Kısa özeti kontrol et ve onayı GitHub'a gönder.";
+      action = <button className="btn btn-primary" onClick={onShowFindings}>Gönderime git ↓</button>;
+    } else {
+      todo = "Bulgulara göz at; gereksiz olanların işaretini kaldır, sonra review'u GitHub'a gönder.";
+      action = <button className="btn btn-primary" onClick={onShowFindings}>Bulguları incele ↓</button>;
+    }
+  }
+
+  const ci = CI_WORD[pr.ci];
+  return (
+    <section className={`result-card result-${tone}`}>
+      <div className="result-main">
+        <p className="result-label">GitShield sonucu</p>
+        <h2 className="result-headline">{headline}</h2>
+        {bySeverity.length > 0 && (
+          <div className="result-counts">
+            {bySeverity.map(([s, n]) => (
+              <span key={s} className={`result-count sev-${s.toLowerCase()}`}>{n} {SEVERITY_WORD[s]}</span>
+            ))}
+          </div>
+        )}
+        {sorted.length > 0 && (
+          <ul className="result-findings">
+            {sorted.slice(0, 3).map((c) => (
+              <li key={c.id}>
+                <SeverityBadge severity={c.severity} />
+                <a href={`#comment-${c.id}`} onClick={onShowFindings}>{c.title}</a>
+                <span className="mono small muted">{c.path}{c.line !== null ? `:${c.line}` : ""}</span>
+              </li>
+            ))}
+            {sorted.length > 3 && <li className="muted small">ve {sorted.length - 3} bulgu daha</li>}
+          </ul>
+        )}
+        {review?.status === "running" && <ProcessStepper review={review} />}
+        <div className="result-facts">
+          <RiskWord risk={pr.risk} />
+          {ci && <span className={pr.ci === "failure" ? "fact-bad" : ""}>{ci}</span>}
+          {review && (review.status === "ready" || review.status === "submitted") && (
+            <span>Önerilen karar: <VerdictBadge verdict={review.verdict} /></span>
+          )}
+        </div>
+      </div>
+      <div className={`result-todo ${review?.status === "failed" ? "todo-alert" : ""}`}>
+        <p className="result-label">Ne yapmalısın?</p>
+        <p>{todo}</p>
+        {action}
+      </div>
+    </section>
   );
 }
 
@@ -261,45 +373,6 @@ function ReviewEditor({ review, pr, setReview, setComment, onSubmitted }: {
         </div>
       )}
 
-      <div className="review-grid">
-        <div className="card">
-          <div className="card-head">
-            <h3>Özet</h3>
-            <span className="muted small">{review.provider} {review.model} · {timeAgo(review.created_at)}</span>
-          </div>
-          <textarea className="input textarea" rows={6} value={summary} disabled={locked}
-                    onChange={(e) => setSummary(e.target.value)} onBlur={saveMeta} />
-          <div className="verdict-row">
-            <label className="small muted" htmlFor="verdict">Karar</label>
-            <select id="verdict" className="input select" value={verdict} disabled={locked}
-                    onChange={(e) => setVerdict(e.target.value as Verdict)} onBlur={saveMeta}>
-              {(["REQUEST_CHANGES", "COMMENT", "APPROVE"] as Verdict[]).map((v) => (
-                <option key={v} value={v}>{verdictLabel(v)}</option>
-              ))}
-            </select>
-            {review.recommended_verdict && review.recommended_verdict !== verdict && (
-              <span className="small">
-                Doğrulayıcı önerisi: <VerdictBadge verdict={review.recommended_verdict} />
-              </span>
-            )}
-          </div>
-        </div>
-        <ChartCard title="Yorum hunisi"
-                   subtitle={`${review.stats.scanner_findings ?? 0} tarayıcı bulgusu · ${review.stats.llm_comments ?? 0} AI yorumu`}>
-          <StackedBarList series={FUNNEL_SERIES} empty="Hiç yorum üretilmedi — PR temiz görünüyor." rows={
-            comments.length ? [
-              { key: "Üretilen", label: "Üretilen", values: { n: comments.length } },
-              { key: "Doğrulamayı geçen", label: "Doğrulamayı geçen",
-                values: { n: comments.filter((c) => c.verification !== "rejected").length } },
-              { key: "Gönderilecek", label: "Gönderilecek", values: { n: included.length } },
-              { key: "Satır içi", label: "Satır içi", values: { n: inline.length } },
-            ] : []} />
-          {review.verifier_notes && <p className="small verifier-note">{review.verifier_notes}</p>}
-        </ChartCard>
-      </div>
-
-      {review.followups.length > 0 && <FollowupsCard followups={review.followups} />}
-
       <div className="filters">
         {(["all", "confirmed", "uncertain", "rejected", "unverified", "included"] as Filter[])
           .filter((f) => f === "all" || f === "included" || counts[f])
@@ -319,6 +392,31 @@ function ReviewEditor({ review, pr, setReview, setComment, onSubmitted }: {
           ))}
         </div>
       )}
+
+      {review.followups.length > 0 && <FollowupsCard followups={review.followups} />}
+
+      <div className="card">
+        <div className="card-head">
+          <h3>GitHub'a gidecek özet ve karar</h3>
+          <span className="muted small">{review.provider} {review.model} · {timeAgo(review.created_at)}</span>
+        </div>
+        <textarea className="input textarea" rows={5} value={summary} disabled={locked}
+                  onChange={(e) => setSummary(e.target.value)} onBlur={saveMeta} />
+        <div className="verdict-row">
+          <label className="small muted" htmlFor="verdict">Karar</label>
+          <select id="verdict" className="input select" value={verdict} disabled={locked}
+                  onChange={(e) => setVerdict(e.target.value as Verdict)} onBlur={saveMeta}>
+            {(["REQUEST_CHANGES", "COMMENT", "APPROVE"] as Verdict[]).map((v) => (
+              <option key={v} value={v}>{verdictLabel(v)}</option>
+            ))}
+          </select>
+          {review.recommended_verdict && review.recommended_verdict !== verdict && (
+            <span className="small">
+              Doğrulayıcı önerisi: <VerdictBadge verdict={review.recommended_verdict} />
+            </span>
+          )}
+        </div>
+      </div>
 
       {error && <ErrorBox error={error} />}
 
@@ -353,6 +451,26 @@ function ReviewEditor({ review, pr, setReview, setComment, onSubmitted }: {
         )}
       </div>
     </div>
+  );
+}
+
+/** How many comments were produced, survived verification and will be sent. */
+function FunnelCard({ review }: { review: Review }) {
+  const comments = review.comments;
+  const included = comments.filter((c) => c.included);
+  return (
+    <ChartCard title="Yorum hunisi"
+               subtitle={`${review.stats.scanner_findings ?? 0} tarayıcı bulgusu · ${review.stats.llm_comments ?? 0} AI yorumu`}>
+      <StackedBarList series={FUNNEL_SERIES} empty="Hiç yorum üretilmedi — PR temiz görünüyor." rows={
+        comments.length ? [
+          { key: "Üretilen", label: "Üretilen", values: { n: comments.length } },
+          { key: "Doğrulamayı geçen", label: "Doğrulamayı geçen",
+            values: { n: comments.filter((c) => c.verification !== "rejected").length } },
+          { key: "Gönderilecek", label: "Gönderilecek", values: { n: included.length } },
+          { key: "Satır içi", label: "Satır içi", values: { n: included.filter((c) => c.in_diff).length } },
+        ] : []} />
+      {review.verifier_notes && <p className="small verifier-note">{review.verifier_notes}</p>}
+    </ChartCard>
   );
 }
 
@@ -418,7 +536,8 @@ function CommentCard({ comment: c, onChange, locked, compact }: {
   };
 
   return (
-    <article className={`comment ${c.included ? "" : "excluded"} ${compact ? "compact" : ""}`}>
+    <article id={compact ? undefined : `comment-${c.id}`}
+             className={`comment ${c.included ? "" : "excluded"} ${compact ? "compact" : ""}`}>
       <header className="comment-head">
         {!locked && onChange && (
           <input type="checkbox" checked={c.included} disabled={busy} title="GitHub'a gönderilecek mi?"
