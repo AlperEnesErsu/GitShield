@@ -91,6 +91,12 @@ gitshield scan --branch main...HEAD
 # Bulgular için LLM düzeltme önerisi üret
 gitshield scan --fix
 
+# Yalnızca değişiklikleri değil, depodaki tüm izlenen satırları tara
+gitshield scan --all
+
+# Mevcut bulguları kabul et (baseline); sonraki taramalar yalnızca yeni bulguları raporlar
+gitshield scan --all --update-baseline
+
 # SARIF raporunu dosyaya yaz
 gitshield scan --format sarif --output results.sarif
 
@@ -105,8 +111,12 @@ gitshield scan --format json > results.json
 | `PATH` (argüman) | Taranacak depo. Varsayılan: `.` |
 | `-s, --staged` | Yalnızca staged değişiklikler (`git diff --cached`). |
 | `-b, --branch REF` | Bir ref veya aralıkla karşılaştır (ör. `main...HEAD`, bir commit SHA'sı). |
+| `--all` | Değişiklikler yerine çalışma ağacındaki tüm izlenen satırları (ve untracked dosyaları) tarar. `--staged` / `--branch` ile birlikte kullanılamaz. |
 | `--no-untracked` | Çalışma ağacı taramasında untracked dosyaları atla. Varsayılan: izlenmeyen, `.gitignore` dışı dosyalar da taranır. |
 | `--no-ignore-file` | Depo kökündeki `.gitshieldignore` dosyasını yok say. |
+| `--baseline DOSYA` | Kabul edilmiş bulguların baseline dosyası. Varsayılan: depo kökündeki `.gitshield-baseline.json`. |
+| `--no-baseline` | Baseline'ı yok say; kabul edilmiş bulgular da raporlanır. |
+| `--update-baseline` | Bu taramanın bulgularını baseline dosyasına ekler ve rapor üretmeden 0 ile çıkar. |
 | `--no-entropy` | Entropi sezgisini kapat; yalnızca regex kuralları çalışır. |
 | `--rules-dir DIZIN` | Dizindeki `*.yaml` kural dosyalarını yerleşik kurallara **ekler** (yerleşik kurallar değiştirilmez). |
 | `-f, --fix` | Bulgular için LLM düzeltme önerisi üretir. |
@@ -155,6 +165,21 @@ secrets.example
 ```
 
 CLI dosyayı otomatik okur; `--no-ignore-file` ile kapatılır. Bu repo da kendi test dosyaları için bir `.gitshieldignore` kullanır.
+
+#### Baseline (`.gitshield-baseline.json`)
+
+GitShield'ı bulgusu olan bir depoya eklerken mevcut bulguları tek tek düzeltmek ya da bastırmak gerekmez: baseline dosyası bugün var olan bulguları kabul eder, sonraki taramalar yalnızca **yeni** bulguları raporlar ve çıkış kodunu yalnızca onlara göre belirler.
+
+```bash
+gitshield scan --all --update-baseline   # tüm depodaki bulguları kabul et
+git add .gitshield-baseline.json         # dosyayı inceleyip commit'leyin
+```
+
+- Her kayıt kural kimliği, depo-göreli dosya yolu ve boşlukları normalize edilmiş satır içeriğinden üretilen bir SHA-256 parmak izidir. **Satır numarası parmak izine girmez**; satırın üstüne kod eklenmesi kaydı bozmaz. Satırın içeriği değişirse (ör. sır yenisiyle değiştirilirse) bulgu yeni sayılır.
+- Aynı dosyada birebir aynı satır birden fazla kez geçerse her kopya ayrı sayılır; kabul edilmiş bir satırın yeni bir kopyası yine raporlanır.
+- Dosyada eşleşen metin veya sır **yoktur**; yalnızca parmak izi, kural kimliği, dosya yolu ve önem tutulur.
+- `--update-baseline` mevcut kayıtları korur ve yenilerini ekler (diff taramaları deponun yalnızca bir kısmını gördüğü için dosya baştan yazılmaz). Düzeltilmiş bulguların kayıtlarını temizlemek için dosyayı silip yeniden oluşturun.
+- CLI dosyayı otomatik okur; `--baseline DOSYA` ile başka bir yol, `--no-baseline` ile tüm bulgular. Bozuk veya bilinmeyen sürümlü bir baseline dosyası çıkış kodu 2 verir. GitHub Action da depoda commit'lenmiş baseline dosyasını kullanır.
 
 #### Yerleşik kurallar
 
@@ -358,6 +383,7 @@ GitShield/
 │   ├── core/
 │   │   ├── diff_parser.py    # git diff çağrısı, untracked dosyalar, hunk ayrıştırma
 │   │   ├── scanner.py        # Tarama hattı, satır içi bastırma, lockfile kuralı
+│   │   ├── baseline.py       # Baseline dosyası: parmak izi, okuma, birleştirerek yazma
 │   │   ├── entropy.py        # Shannon entropisi ve token filtreleri
 │   │   └── models.py         # Finding, DiffHunk, ScanReport (Pydantic) ve maskeleme
 │   ├── rules/
@@ -410,7 +436,7 @@ CI (`.github/workflows/ci.yml`) testleri Ubuntu'da Python 3.11–3.13, Windows't
 **Sonraki adımlar:**
 - [ ] Satır bazlı regex yerine AST tabanlı analiz (ör. Python `ast` ile girdi-çıktı akışı) ve daha az yanlış pozitif.
 - [ ] Sır canlılık doğrulaması: sızan bir anahtarın hâlâ geçerli olup olmadığını sağlayıcı API'si üzerinden kontrol etmek.
-- [ ] Baseline dosyası: mevcut bulguları kabul edip yalnızca yeni bulguları raporlamak.
+- [x] Baseline dosyası: mevcut bulguları kabul edip yalnızca yeni bulguları raporlamak (`--update-baseline`, `--all`).
 - [ ] Faz 4'ten kalan `--interactive` düzeltme modu.
 - [ ] OWASP kurallarının Go, Java, PHP ve Ruby gibi diğer dillere genişletilmesi.
 - [ ] Tedarik zinciri kuralları: `RuleType.DEPENDENCY` tanımlı, ancak henüz hiçbir yerleşik kural kullanmıyor.

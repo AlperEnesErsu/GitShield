@@ -38,15 +38,19 @@ def get_git_diff(
     staged: bool = False,
     branch_or_commit: str | None = None,
     include_untracked: bool = True,
+    all_files: bool = False,
 ) -> str:
     """Retrieve raw unified git diff from the local repository.
 
     Raises GitDiffError when git fails. In default working-tree mode, untracked
     (non-ignored) files are appended as all-added diffs when include_untracked is set.
+    all_files diffs the working tree against the empty tree, so every tracked line counts as added.
     """
     cmd = ["diff", "--no-color", "-U3"]
 
-    if branch_or_commit:
+    if all_files:
+        cmd.append(EMPTY_TREE)
+    elif branch_or_commit:
         # --end-of-options stops a ref like "--output=x" from being read as a git option
         cmd += ["--end-of-options", branch_or_commit]
     elif staged:
