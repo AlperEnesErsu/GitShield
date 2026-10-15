@@ -119,6 +119,15 @@ Geleneksel SAST çözümleri genellikle tüm kod tabanını tarar ve geliştiric
 - **Hata davranışı:** Sağlayıcı yoksa, anahtar eksikse, zaman aşımı, HTTP hatası veya boş yanıt olursa kural tarafındaki varsayılan öneri ile birlikte hata mesajı döner. API anahtarı hata metinlerinde yer almaz.
 - Zaman aşımı 60 saniye. Anthropic isteğinde çıktı üst sınırı 2048 token'dır.
 
+### 4.5.1. Etkileşimli Düzeltme (`interactive.py`, CLI `--interactive`)
+
+- **Öneri biçimi:** `AIRemediator.propose_patch` bulgunun çevresindeki ±8 satırı işaretsiz olarak gönderir ve kod bloğunun bu satır aralığının tamamının yerine geçmesini ister (`USER_PATCH_TEMPLATE`). Yanıttaki ilk kod bloğu `FixProposal(start, original, replacement, explanation)` olur.
+- **Sırlar dosyaya geri döner, LLM'e gitmez:** Satırlar `redact_secrets` ve bulgunun kendi eşleşmesiyle maskelenir. Modelin değiştirmeden döndürdüğü maskeli satırlar orijinal içerikle değiştirilir; değiştirilmiş bir satırda `<REDACTED_SECRET>` kalırsa öneri reddedilir.
+- **Uygulama:** `apply_proposal` dosyayı `newline=""` ile okur, aralığın hâlâ `original` ile aynı olduğunu doğrular, pencerenin satır sonunu (`\r\n` / `\n`) ve dosya sonundaki satır sonu yokluğunu korur. Yol depo kökü dışına çıkamaz.
+- **Kayan satırlar:** Aynı dosyadaki uygulanmış düzenlemeler sırayla tutulur. `map_line` sonraki bulgunun satırını düzenlemelerden geçirir; düzenleme penceresi içindeki satırlar `difflib.SequenceMatcher` ile eşlenir, yeniden yazılmış bir satırdaki bulgu "önceki düzeltmenin kapsamında" sayılıp atlanır.
+- **Baseline:** `b` ile seçilen bulgular oturum sonunda `write_baseline` ile eklenir. Parmak izleri tüm rapor üzerinden hesaplanmış olanlardır, böylece tekrar eden satırların sıra indeksi taramadakiyle aynı kalır.
+- **Çıkış kodu:** Atlanan veya incelenmeyen HIGH/CRITICAL bulgu varsa 1. Uygulanan düzeltmeler doğrulanmadığı için yeniden tarama önerilir.
+
 ### 4.6. Çıktı Biçimleri (`formatters/`)
 
 - **Konsol (`console.py`):** Rich tablosu. Sır bulguları `Finding.mask_secret()` ile gösterilir; diğer eşleşmeler olduğu gibi gösterilir.
@@ -201,10 +210,10 @@ GitHub Action bu kodları ayırt eder: `1` job'u başarısız yapar, `2` ve diğ
 ## 7. Güvenlik ve Gizlilik
 
 - **Konsol, JSON ve SARIF:** Sır bulguları maskelenir (ilk 4 karakter, veya tamamen gizli). Ham sır dosyaya ya da stdout'a yazılmaz.
-- **CLI `--fix`:** LLM'e giden bağlam `redact_secrets` ile temizlenir (Bölüm 4.5). Model yalnızca maskelenmiş kodu ve bulgu meta verisini görür.
+- **CLI `--fix` / `--interactive`:** LLM'e giden bağlam `redact_secrets` ile temizlenir (Bölüm 4.5). Model yalnızca maskelenmiş kodu ve bulgu meta verisini görür.
 - **Web incelemesi:** Tarayıcının bulduğu sır değerleri LLM'e giden diff ve bulgu bağlamında `<REDACTED_SECRET>` ile değiştirilir. Bu koruma **yalnızca tarayıcının yakaladığı sırları** kapsar; PR açıklaması ve yorumları gibi diğer içerikler olduğu gibi gönderilir ve "güvenilmeyen veri" olarak etiketlenir.
 - **Yerel sunucu:** Bölüm 4.7'deki Host, Origin, istemci başlığı ve isteğe bağlı API token korumaları. Sunucu kullanıcının GitHub token'ı ile çalışır, bu nedenle varsayılan bağlama adresi `127.0.0.1`'dir.
-- **Ortam değişkenleri:** CLI `.env` dosyasını okumaz; `--fix` için anahtarlar ortamda tanımlı olmalıdır. Web sunucusu `python-dotenv` ile `.env` dosyasını yükler.
+- **Ortam değişkenleri:** CLI, çalışma dizinindeki (veya üst dizinlerdeki) `.env` dosyasını yükler; web sunucusu da `python-dotenv` ile `.env` dosyasını yükler. İkisinde de ortamda zaten tanımlı değişkenler önceliklidir.
 
 ---
 
@@ -212,8 +221,8 @@ GitHub Action bu kodları ayırt eder: `1` job'u başarısız yapar, `2` ve diğ
 
 | Değişken | Kullanıldığı yer | Varsayılan |
 |---|---|---|
-| `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` | `--fix`, web | — |
-| `LLM_PROVIDER`, `LLM_MODEL` | `--fix`, web | otomatik / sağlayıcıya göre |
+| `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` | `--fix`, `--interactive`, web | — |
+| `LLM_PROVIDER`, `LLM_MODEL` | `--fix`, `--interactive`, web | otomatik / sağlayıcıya göre |
 | `LLM_FALLBACK_MODEL` | web (Gemini) | `gemini-3.5-flash` |
 | `LLM_EFFORT` | web (Anthropic) | `medium` |
 | `GITSHIELD_MAX_LLM_CALLS_PER_DAY` | web | `200` (`0` sınırsız) |
@@ -233,5 +242,5 @@ GitHub Action bu kodları ayırt eder: `1` job'u başarısız yapar, `2` ve diğ
 - **Kapsam:** OWASP kuralları Python, JavaScript ve TypeScript ile sınırlıdır.
 - **Tedarik zinciri:** `DEPENDENCY` türü tanımlıdır ama kural yoktur.
 - **Doğrulama yok:** Bulunan sırların canlı olup olmadığı kontrol edilmez.
-- **Düzeltmeler:** `--fix` çıktısı öneridir; uygulanmaz ve test edilmez.
+- **Düzeltmeler:** `--fix` çıktısı öneridir ve uygulanmaz. `--interactive` öneriyi yalnızca kullanıcı onaylarsa dosyaya yazar; hiçbir öneri test edilmez.
 - **Baseline:** Yalnızca CLI'da (ve dolayısıyla GitHub Action'da) uygulanır; web review hattı baseline okumaz. Düzeltilen bulguların kayıtları otomatik temizlenmez.

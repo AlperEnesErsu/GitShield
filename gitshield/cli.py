@@ -11,6 +11,7 @@ from gitshield.ai.remediator import AIRemediator
 from gitshield.core.baseline import (
     BASELINE_FILE_NAME,
     filter_baselined,
+    fingerprint_findings,
     load_baseline,
     write_baseline,
 )
@@ -19,6 +20,7 @@ from gitshield.core.models import ScanReport
 from gitshield.core.scanner import Scanner, load_ignore_file
 from gitshield.formatters.console import print_report_to_console
 from gitshield.formatters.sarif import build_sarif
+from gitshield.interactive import review_findings
 from gitshield.rules.engine import RuleEngine
 
 app = typer.Typer(
@@ -103,6 +105,12 @@ def scan(
         "-f",
         help="Trigger AI remediation engine to generate code fixes for findings.",
     ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Review findings one by one: apply the LLM's suggested fix, skip, or add to the baseline.",
+    ),
     format: str = typer.Option(
         "console",
         "--format",
@@ -131,6 +139,9 @@ def scan(
 
     if all_files and (staged or branch):
         err_console.print("[bold red]--all cannot be combined with --staged or --branch.[/bold red]")
+        raise typer.Exit(code=EXIT_ERROR)
+    if interactive and (format != "console" or update_baseline):
+        err_console.print("[bold red]--interactive needs console output and cannot be combined with --update-baseline.[/bold red]")
         raise typer.Exit(code=EXIT_ERROR)
     if update_baseline and no_baseline:
         err_console.print("[bold red]--update-baseline cannot be combined with --no-baseline.[/bold red]")
@@ -163,6 +174,8 @@ def scan(
         if update_baseline:
             added, total = write_baseline(baseline_path, report.findings, repo_path=repo_path)
         elif not no_baseline:
+            # Fingerprints over the full report, so a later baseline choice keeps occurrence indices
+            print_of = dict(zip(map(id, report.findings), fingerprint_findings(report.findings, repo_path), strict=True))
             report.findings, baselined = filter_baselined(
                 report.findings, load_baseline(baseline_path), repo_path=repo_path
             )
@@ -178,6 +191,24 @@ def scan(
         return
     if baselined:
         log.print(f"[dim]{baselined} finding(s) accepted in the baseline were not reported (--no-baseline shows them).[/dim]")
+
+    if interactive:
+        print_report_to_console(report, console=console)
+        if not report.findings:
+            return
+        if no_baseline:
+            print_of = dict(zip(map(id, report.findings), fingerprint_findings(report.findings, repo_path), strict=True))
+        result = review_findings(
+            report.findings,
+            [print_of[id(f)] for f in report.findings],
+            repo_path=repo_path,
+            baseline_path=baseline_path,
+            remediator=AIRemediator(),
+            console=console,
+        )
+        if fail_on_critical and result.has_blocking:
+            raise typer.Exit(code=1)
+        return
 
     if fix and report.findings:
         remediator = AIRemediator()
