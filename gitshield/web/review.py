@@ -1,6 +1,7 @@
 """PR review pipeline: GitShield scan -> LLM review -> LLM verification -> draft issues."""
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -75,239 +76,321 @@ def begin_review(db: Database, pr: dict[str, Any], full_name: str,
     return review_id
 
 
+@dataclass
+class _Fetched:
+    """What the fetch stage hands to the rest of the pipeline."""
+
+    pr: dict[str, Any]
+    files: list[dict[str, Any]]
+    raw_diff: str
+    annotated: str
+    commentable: dict[str, set[int]]
+    skipped: list[dict[str, Any]]
+    previous: dict[str, Any] | None
+    delta_files: list[dict[str, Any]] | None
+
+
+async def _fetch_stage(db: Database, gh: GitHubClient, progress: Progress, review_id: int,
+                       owner: str, repo: str, number: int, force_full: bool) -> _Fetched:
+    full_name = f"{owner}/{repo}"
+    progress.start("fetch", "PR ve diff GitHub'dan alınıyor")
+    pr = await gh.get_pull(owner, repo, number)
+    files = await gh.list_pull_files(owner, repo, number)
+    raw_diff, annotated, commentable, skipped = build_diff(files, settings.max_diff_chars)
+    fetch_detail = f"{len(files)} dosya · +{pr.get('additions', 0)} −{pr.get('deletions', 0)}"
+
+    # Incremental mode: review only what changed since the last reviewed commit.
+    previous = None if force_full else find_previous_review(
+        db, full_name, number, review_id, pr["head"]["sha"])
+    delta_files: list[dict[str, Any]] | None = None
+    commits = 0
+    if previous:
+        try:
+            cmp = await gh.compare(owner, repo, previous["head_sha"], pr["head"]["sha"])
+            # A force-push/rebase makes history diverge; fall back to a full review then.
+            if cmp.get("status") == "ahead":
+                delta_files = cmp.get("files", [])
+                commits = len(cmp.get("commits", []))
+        except GitHubError:
+            delta_files = None
+    if previous and delta_files is not None:
+        raw_diff, annotated, _, skipped = build_diff(delta_files, settings.max_diff_chars)
+        db.update_review(review_id, mode="incremental", base_sha=previous["head_sha"])
+        fetch_detail = (f"Artımlı: {previous['head_sha'][:7]} → {pr['head']['sha'][:7]} · "
+                        f"{commits} yeni commit · {len(delta_files)} dosya")
+    else:
+        previous = None
+    progress.done("fetch", fetch_detail)
+    return _Fetched(pr, files, raw_diff, annotated, commentable, skipped, previous, delta_files)
+
+
+def _detected_secrets(report: Any) -> list[str]:
+    """Secrets the scanner found; they are never sent to the LLM or stored in plain text."""
+    return [f.matched_text for f in report.findings
+            if f.rule_type in (RuleType.SECRET, RuleType.ENTROPY) and len(f.matched_text) >= 6]
+
+
+def _redact(text: str, secrets: list[str]) -> str:
+    for secret in secrets:
+        text = text.replace(secret, "<REDACTED_SECRET>")
+    return text
+
+
+def _scanner_candidates(report: Any, secrets: list[str]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for finding in report.findings:
+        context = _redact(finding.context or "", secrets)
+        body = finding.description
+        if finding.cwe:
+            body += f" ({finding.cwe})"
+        if context:
+            body += f"\n\n```\n{context}\n```"
+        candidates.append({
+            "source": "scanner", "path": finding.file_path, "line": finding.line_number,
+            "severity": finding.severity.value,
+            "category": "security", "title": finding.title, "body": body,
+            "suggestion": finding.suggested_fix or "", "rule_id": finding.rule_id,
+        })
+    return candidates
+
+
+async def _ai_review_stage(provider: LLMProvider, progress: Progress, fetched: _Fetched,
+                           full_name: str, number: int, annotated: str, memory: list[dict[str, Any]],
+                           memory_text: str, candidates: list[dict[str, Any]]) -> tuple[str, str]:
+    """Ask the LLM for a review; appends its comments to `candidates`. Returns (summary, verdict)."""
+    pr = fetched.pr
+    progress.start("ai_review", f"{provider.model} diff'i okuyor")
+    scanner_lines = "\n".join(
+        f"- [{c['severity']}] {c['rule_id']} {c['path']}:{c['line']} {c['title']}"
+        for c in candidates
+    ) or "(none)"
+    skipped_lines = "\n".join(f"- {s['path']}: {s['reason']}" for s in fetched.skipped) or "(none)"
+    scope = ("This is an incremental review: the diff contains only the commits pushed since "
+             "the last reviewed commit. Review those changes.\n\n" if fetched.previous else "")
+    review_prompt = (
+        f"{scope}{memory_text}Repository: {full_name}\nPull request #{number}: {pr['title']}\n\n"
+        f"<pr_description>\n{pr.get('body') or '(empty)'}\n</pr_description>\n\n"
+        f"<scanner_findings>\n{scanner_lines}\n</scanner_findings>\n\n"
+        f"<files_not_included>\n{skipped_lines}\n</files_not_included>\n\n"
+        f"<diff>\n{annotated}\n</diff>"
+    )
+    review = await provider.complete(
+        REVIEW_SYSTEM.format(language=settings.review_language), review_prompt, ReviewOutput
+    )
+    for llm_comment in review.comments:
+        candidates.append({
+            "source": "llm", "path": llm_comment.path, "line": llm_comment.line,
+            "severity": llm_comment.severity, "category": llm_comment.category,
+            "title": llm_comment.title, "body": llm_comment.body,
+            "suggestion": llm_comment.suggestion, "rule_id": None,
+        })
+    progress.done("ai_review", f"{provider.model} · {len(review.comments)} yorum"
+                               + (f" · hafızada {len(memory)} kayıt" if memory else ""))
+    return review.summary, review.verdict
+
+
+def _mark_anchors(candidates: list[dict[str, Any]], commentable: dict[str, set[int]]) -> None:
+    """Deterministic verification: the comment must point at a line GitHub can anchor to."""
+    for c in candidates:
+        c["in_diff"] = c["line"] in commentable.get(c["path"], set())
+        c["verification"] = "unverified"
+        c["verification_note"] = ""
+        if c["path"] not in commentable:
+            c["verification"] = "rejected"
+            c["verification_note"] = "Dosya bu PR'ın diff'inde yok."
+
+
+def _apply_memory(candidates: list[dict[str, Any]], memory: list[dict[str, Any]]) -> list[int]:
+    """Repo memory: items the maintainers dismissed are rejected before anything else sees them."""
+    suppressed_ids = []
+    for c in candidates:
+        m = suppressing_memory(c, memory)
+        if m:
+            c["verification"] = "rejected"
+            c["verification_note"] = f"Repo hafızası: daha önce susturuldu (#{m['id']})."
+            c["suppressed"] = True
+            suppressed_ids.append(m["id"])
+    return suppressed_ids
+
+
+async def _verify_stage(provider: LLMProvider | None, progress: Progress, review_id: int,
+                        number: int, pr: dict[str, Any], annotated: str, memory_text: str,
+                        candidates: list[dict[str, Any]],
+                        to_verify: list[dict[str, Any]]) -> tuple[str | None, str]:
+    """LLM verification of the comments. Returns (recommended_verdict, verifier_notes)."""
+    recommended: str | None = None
+    verifier_notes = ""
+    if provider and to_verify:
+        progress.start("verify", f"{len(to_verify)} yorum diff'e karşı kontrol ediliyor")
+        numbered = "\n\n".join(
+            f"[{i}] ({c['source']}) {c['path']}:{c['line']} [{c['severity']}/{c['category']}] "
+            f"{c['title']}\n{c['body']}"
+            + (f"\nSuggestion:\n{c['suggestion']}" if c["suggestion"] else "")
+            for i, c in enumerate(to_verify)
+        )
+        verify_prompt = (
+            f"{memory_text}Pull request #{number}: {pr['title']}\n\n"
+            f"<comments>\n{numbered}\n</comments>\n\n<diff>\n{annotated}\n</diff>"
+        )
+        try:
+            verification = await provider.complete(
+                VERIFY_SYSTEM.format(language=settings.review_language), verify_prompt,
+                VerificationOutput,
+            )
+        except LLMUnavailable as e:
+            # The review itself took minutes; a verifier outage must not throw it away. The
+            # comments reach the maintainer marked unverified, and nothing is sent without approval.
+            log.warning("Review %s: verifier unavailable, keeping unverified comments: %s", review_id, e)
+            verification = None
+            verifier_notes = f"Doğrulayıcıya ulaşılamadı ({e}); yorumlar doğrulanmadan listelendi."
+            progress.skip("verify", "Doğrulayıcıya ulaşılamadı; yorumlar doğrulanmadan onayına geldi")
+        if verification is not None:
+            recommended = verification.recommended_verdict
+            verifier_notes = verification.notes
+            for item in verification.items:
+                if 0 <= item.index < len(to_verify):
+                    c = to_verify[item.index]
+                    if c["verification"] != "rejected":
+                        c["verification"] = item.status
+                        c["verification_note"] = item.reason
+            counts = {k: sum(1 for c in candidates if c["verification"] == k)
+                      for k in ("confirmed", "uncertain", "rejected")}
+            progress.done("verify", f"{counts['confirmed']} doğrulandı · {counts['uncertain']} belirsiz · "
+                                    f"{counts['rejected']} reddedildi")
+    elif not to_verify:
+        progress.skip("verify", "Doğrulanacak yorum yok")
+    else:
+        progress.skip("verify", "LLM yok; yalnızca satır konumu kontrol edildi")
+    return recommended, verifier_notes
+
+
+async def _followup_stage(provider: LLMProvider | None, progress: Progress, fetched: _Fetched,
+                          candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Incremental reviews: which earlier comments the new commits fixed; carry open ones over."""
+    previous = fetched.previous
+    if not previous:
+        return []
+    followups = await check_followups(provider, previous, fetched.delta_files or [])
+    open_items = [f for f in followups if f["status"] != "fixed"]
+    # Comments of a review that never reached GitHub would be lost; carry the open ones over.
+    if previous["status"] != "submitted":
+        for f in open_items:
+            c = f["prev"]
+            if f["new_line"] is None:
+                continue
+            candidates.append({
+                "source": "carried", "path": c["path"], "line": f["new_line"],
+                "severity": c["severity"], "category": c["category"], "title": c["title"],
+                "body": c["body"], "suggestion": c["suggestion"] or "", "rule_id": c["rule_id"],
+                "in_diff": f["new_line"] in fetched.commentable.get(c["path"], set()),
+                "verification": c["verification"],
+                "verification_note": f"Önceki review'dan taşındı: {f['note']}",
+            })
+    fixed = len(followups) - len(open_items)
+    progress.append("verify", f"önceki {len(followups)} yorumdan {fixed} düzeltildi")
+    return followups
+
+
+def _scanner_only_summary(report: Any) -> tuple[str, str]:
+    summary = (
+        f"GitShield taraması {report.scanned_files_count} dosyada "
+        f"{report.scanned_lines_count} eklenen satırı inceledi ve "
+        f"{len(report.findings)} bulgu üretti. (LLM yapılandırılmadığı için yalnızca "
+        "statik analiz sonuçları gösteriliyor.)"
+    )
+    return summary, ("REQUEST_CHANGES" if report.has_high else "COMMENT")
+
+
+def _persist_comments(db: Database, review_id: int, full_name: str, provider: LLMProvider | None,
+                      pr: dict[str, Any], candidates: list[dict[str, Any]],
+                      followups: list[dict[str, Any]]) -> int:
+    """Store comments, draft issues for confirmed high-severity ones, and follow-ups.
+    Returns how many draft issues were created."""
+    html_base = pr["head"]["repo"]["html_url"] if pr["head"].get("repo") else pr["base"]["repo"]["html_url"]
+    drafts_created = 0
+    for c in candidates:
+        comment_id = db.add_comment(
+            review_id, source=c["source"], path=c["path"], line=c["line"],
+            in_diff=c["in_diff"], severity=c["severity"], category=c["category"],
+            title=c["title"], body=c["body"], suggestion=c["suggestion"] or None,
+            rule_id=c["rule_id"], verification=c["verification"],
+            verification_note=c["verification_note"],
+            included=c["verification"] != "rejected",
+        )
+        issue_worthy = c["verification"] == "confirmed" or (
+            not provider and c["verification"] == "unverified"
+        )
+        if issue_worthy and c["severity"] in ISSUE_SEVERITIES:
+            drafts_created += db.add_draft_issue(
+                full_name, review_id, comment_id,
+                fingerprint(c["path"], c["rule_id"] or c["title"]),
+                title=f"[{c['severity']}] {c['title']}",
+                body=draft_issue_body(c, pr, html_base),
+                severity=c["severity"],
+            ) is not None
+
+    for f in followups:
+        db.add_followup(review_id, prev_comment_id=f["prev"]["id"], path=f["path"],
+                        old_line=f["old_line"], new_line=f["new_line"], severity=f["severity"],
+                        title=f["title"], status=f["status"], note=f["note"])
+    return drafts_created
+
+
 async def run_review(db: Database, gh: GitHubClient, provider: LLMProvider | None,
                      review_id: int, owner: str, repo: str, number: int,
                      force_full: bool = False, notify: bool = True) -> None:
+    """The review pipeline: fetch -> static scan -> LLM review -> verification -> stored, awaiting
+    the maintainer's approval. Each stage is a helper above; this function only sequences them."""
     full_name = f"{owner}/{repo}"
     progress = Progress(db, review_id)
     try:
-        progress.start("fetch", "PR ve diff GitHub'dan alınıyor")
-        pr = await gh.get_pull(owner, repo, number)
-        files = await gh.list_pull_files(owner, repo, number)
-        raw_diff, annotated, commentable, skipped = build_diff(files, settings.max_diff_chars)
-        fetch_detail = f"{len(files)} dosya · +{pr.get('additions', 0)} −{pr.get('deletions', 0)}"
-
-        # Incremental mode: review only what changed since the last reviewed commit.
-        previous = None if force_full else find_previous_review(
-            db, full_name, number, review_id, pr["head"]["sha"])
-        delta_files: list[dict[str, Any]] | None = None
-        commits = 0
-        if previous:
-            try:
-                cmp = await gh.compare(owner, repo, previous["head_sha"], pr["head"]["sha"])
-                # A force-push/rebase makes history diverge; fall back to a full review then.
-                if cmp.get("status") == "ahead":
-                    delta_files = cmp.get("files", [])
-                    commits = len(cmp.get("commits", []))
-            except GitHubError:
-                delta_files = None
-        if previous and delta_files is not None:
-            raw_diff, annotated, _, skipped = build_diff(delta_files, settings.max_diff_chars)
-            db.update_review(review_id, mode="incremental", base_sha=previous["head_sha"])
-            fetch_detail = (f"Artımlı: {previous['head_sha'][:7]} → {pr['head']['sha'][:7]} · "
-                            f"{commits} yeni commit · {len(delta_files)} dosya")
-        else:
-            previous = None
-        progress.done("fetch", fetch_detail)
+        fetched = await _fetch_stage(db, gh, progress, review_id, owner, repo, number, force_full)
         memory = db.list_memory(full_name, active_only=True)
         memory_text = memory_prompt(memory)
 
         progress.start("scan", "Kural motoru ve entropi analizi çalışıyor")
-        report = Scanner().scan_diff(Path("."), raw_diff=raw_diff)
+        report = Scanner().scan_diff(Path("."), raw_diff=fetched.raw_diff)
         progress.done("scan", f"{report.scanned_lines_count} eklenen satır · {len(report.findings)} bulgu")
 
         # Never send detected secrets to the LLM or store them in plain text.
-        secrets = [f.matched_text for f in report.findings
-                   if f.rule_type in (RuleType.SECRET, RuleType.ENTROPY) and len(f.matched_text) >= 6]
-        for secret in secrets:
-            annotated = annotated.replace(secret, "<REDACTED_SECRET>")
+        secrets = _detected_secrets(report)
+        annotated = _redact(fetched.annotated, secrets)
+        candidates = _scanner_candidates(report, secrets)
 
-        candidates: list[dict[str, Any]] = []
-        for finding in report.findings:
-            context = finding.context or ""
-            for secret in secrets:
-                context = context.replace(secret, "<REDACTED_SECRET>")
-            body = finding.description
-            if finding.cwe:
-                body += f" ({finding.cwe})"
-            if context:
-                body += f"\n\n```\n{context}\n```"
-            candidates.append({
-                "source": "scanner", "path": finding.file_path, "line": finding.line_number,
-                "severity": finding.severity.value,
-                "category": "security", "title": finding.title, "body": body,
-                "suggestion": finding.suggested_fix or "", "rule_id": finding.rule_id,
-            })
-
-        summary = ""
-        verdict = "COMMENT"
-        recommended: str | None = None
-        verifier_notes = ""
-
+        summary, verdict = "", "COMMENT"
         if provider:
-            progress.start("ai_review", f"{provider.model} diff'i okuyor")
-            scanner_lines = "\n".join(
-                f"- [{c['severity']}] {c['rule_id']} {c['path']}:{c['line']} {c['title']}"
-                for c in candidates
-            ) or "(none)"
-            skipped_lines = "\n".join(f"- {s['path']}: {s['reason']}" for s in skipped) or "(none)"
-            scope = ("This is an incremental review: the diff contains only the commits pushed since "
-                     "the last reviewed commit. Review those changes.\n\n" if previous else "")
-            review_prompt = (
-                f"{scope}{memory_text}Repository: {full_name}\nPull request #{number}: {pr['title']}\n\n"
-                f"<pr_description>\n{pr.get('body') or '(empty)'}\n</pr_description>\n\n"
-                f"<scanner_findings>\n{scanner_lines}\n</scanner_findings>\n\n"
-                f"<files_not_included>\n{skipped_lines}\n</files_not_included>\n\n"
-                f"<diff>\n{annotated}\n</diff>"
-            )
-            review = await provider.complete(
-                REVIEW_SYSTEM.format(language=settings.review_language), review_prompt, ReviewOutput
-            )
-            summary, verdict = review.summary, review.verdict
-            for llm_comment in review.comments:
-                candidates.append({
-                    "source": "llm", "path": llm_comment.path, "line": llm_comment.line,
-                    "severity": llm_comment.severity, "category": llm_comment.category,
-                    "title": llm_comment.title, "body": llm_comment.body,
-                    "suggestion": llm_comment.suggestion, "rule_id": None,
-                })
-            progress.done("ai_review", f"{provider.model} · {len(review.comments)} yorum"
-                                       + (f" · hafızada {len(memory)} kayıt" if memory else ""))
+            summary, verdict = await _ai_review_stage(provider, progress, fetched, full_name, number,
+                                                      annotated, memory, memory_text, candidates)
         else:
             progress.skip("ai_review", "LLM yapılandırılmadı; yalnızca statik analiz")
 
-        # Deterministic verification: the comment must point at a line GitHub can anchor to.
-        for c in candidates:
-            c["in_diff"] = c["line"] in commentable.get(c["path"], set())
-            c["verification"] = "unverified"
-            c["verification_note"] = ""
-            if c["path"] not in commentable:
-                c["verification"] = "rejected"
-                c["verification_note"] = "Dosya bu PR'ın diff'inde yok."
-
-        # Repo memory: items the maintainers dismissed are rejected before anything else sees them.
-        suppressed_ids = []
-        for c in candidates:
-            m = suppressing_memory(c, memory)
-            if m:
-                c["verification"] = "rejected"
-                c["verification_note"] = f"Repo hafızası: daha önce susturuldu (#{m['id']})."
-                c["suppressed"] = True
-                suppressed_ids.append(m["id"])
+        _mark_anchors(candidates, fetched.commentable)
+        suppressed_ids = _apply_memory(candidates, memory)
         db.bump_memory_hits(suppressed_ids)
         to_verify = [c for c in candidates if not c.get("suppressed")]
 
-        if provider and to_verify:
-            progress.start("verify", f"{len(to_verify)} yorum diff'e karşı kontrol ediliyor")
-            numbered = "\n\n".join(
-                f"[{i}] ({c['source']}) {c['path']}:{c['line']} [{c['severity']}/{c['category']}] "
-                f"{c['title']}\n{c['body']}"
-                + (f"\nSuggestion:\n{c['suggestion']}" if c["suggestion"] else "")
-                for i, c in enumerate(to_verify)
-            )
-            verify_prompt = (
-                f"{memory_text}Pull request #{number}: {pr['title']}\n\n"
-                f"<comments>\n{numbered}\n</comments>\n\n<diff>\n{annotated}\n</diff>"
-            )
-            try:
-                verification = await provider.complete(
-                    VERIFY_SYSTEM.format(language=settings.review_language), verify_prompt,
-                    VerificationOutput,
-                )
-            except LLMUnavailable as e:
-                # The review itself took minutes; a verifier outage must not throw it away. The
-                # comments reach the maintainer marked unverified, and nothing is sent without approval.
-                log.warning("Review %s: verifier unavailable, keeping unverified comments: %s", review_id, e)
-                verification = None
-                verifier_notes = f"Doğrulayıcıya ulaşılamadı ({e}); yorumlar doğrulanmadan listelendi."
-                progress.skip("verify", "Doğrulayıcıya ulaşılamadı; yorumlar doğrulanmadan onayına geldi")
-            if verification is not None:
-                recommended = verification.recommended_verdict
-                verifier_notes = verification.notes
-                for item in verification.items:
-                    if 0 <= item.index < len(to_verify):
-                        c = to_verify[item.index]
-                        if c["verification"] != "rejected":
-                            c["verification"] = item.status
-                            c["verification_note"] = item.reason
-                counts = {k: sum(1 for c in candidates if c["verification"] == k)
-                          for k in ("confirmed", "uncertain", "rejected")}
-                progress.done("verify", f"{counts['confirmed']} doğrulandı · {counts['uncertain']} belirsiz · "
-                                        f"{counts['rejected']} reddedildi")
-        elif not to_verify:
-            progress.skip("verify", "Doğrulanacak yorum yok")
-        else:
-            progress.skip("verify", "LLM yok; yalnızca satır konumu kontrol edildi")
-
+        recommended, verifier_notes = await _verify_stage(
+            provider, progress, review_id, number, fetched.pr, annotated, memory_text,
+            candidates, to_verify)
         if suppressed_ids:
             progress.append("verify", f"hafıza {len(suppressed_ids)} yorumu susturdu")
 
-        followups: list[dict[str, Any]] = []
-        if previous:
-            followups = await check_followups(provider, previous, delta_files or [])
-            open_items = [f for f in followups if f["status"] != "fixed"]
-            # Comments of a review that never reached GitHub would be lost; carry the open ones over.
-            if previous["status"] != "submitted":
-                for f in open_items:
-                    c = f["prev"]
-                    if f["new_line"] is None:
-                        continue
-                    candidates.append({
-                        "source": "carried", "path": c["path"], "line": f["new_line"],
-                        "severity": c["severity"], "category": c["category"], "title": c["title"],
-                        "body": c["body"], "suggestion": c["suggestion"] or "", "rule_id": c["rule_id"],
-                        "in_diff": f["new_line"] in commentable.get(c["path"], set()),
-                        "verification": c["verification"],
-                        "verification_note": f"Önceki review'dan taşındı: {f['note']}",
-                    })
-            fixed = len(followups) - len(open_items)
-            progress.append("verify", f"önceki {len(followups)} yorumdan {fixed} düzeltildi")
+        followups = await _followup_stage(provider, progress, fetched, candidates)
 
         if not provider:
-            summary = (
-                f"GitShield taraması {report.scanned_files_count} dosyada "
-                f"{report.scanned_lines_count} eklenen satırı inceledi ve "
-                f"{len(report.findings)} bulgu üretti. (LLM yapılandırılmadığı için yalnızca "
-                "statik analiz sonuçları gösteriliyor.)"
-            )
-            verdict = "REQUEST_CHANGES" if report.has_high else "COMMENT"
+            summary, verdict = _scanner_only_summary(report)
 
-        html_base = pr["head"]["repo"]["html_url"] if pr["head"].get("repo") else pr["base"]["repo"]["html_url"]
-        drafts_created = 0
-        for c in candidates:
-            comment_id = db.add_comment(
-                review_id, source=c["source"], path=c["path"], line=c["line"],
-                in_diff=c["in_diff"], severity=c["severity"], category=c["category"],
-                title=c["title"], body=c["body"], suggestion=c["suggestion"] or None,
-                rule_id=c["rule_id"], verification=c["verification"],
-                verification_note=c["verification_note"],
-                included=c["verification"] != "rejected",
-            )
-            issue_worthy = c["verification"] == "confirmed" or (
-                not provider and c["verification"] == "unverified"
-            )
-            if issue_worthy and c["severity"] in ISSUE_SEVERITIES:
-                drafts_created += db.add_draft_issue(
-                    full_name, review_id, comment_id,
-                    fingerprint(c["path"], c["rule_id"] or c["title"]),
-                    title=f"[{c['severity']}] {c['title']}",
-                    body=draft_issue_body(c, pr, html_base),
-                    severity=c["severity"],
-                ) is not None
-
-        for f in followups:
-            db.add_followup(review_id, prev_comment_id=f["prev"]["id"], path=f["path"],
-                            old_line=f["old_line"], new_line=f["new_line"], severity=f["severity"],
-                            title=f["title"], status=f["status"], note=f["note"])
+        drafts_created = _persist_comments(db, review_id, full_name, provider, fetched.pr,
+                                           candidates, followups)
 
         included = sum(1 for c in candidates if c["verification"] != "rejected")
         progress.start("approve", f"{included} yorum gönderime hazır; gözden geçirip onayla")
         db.update_review(
             review_id, status="ready", summary=summary, verdict=verdict,
             recommended_verdict=recommended, verifier_notes=verifier_notes,
-            skipped_files=skipped,
+            skipped_files=fetched.skipped,
             stats={
-                "files": len(files), "scanned_lines": report.scanned_lines_count,
+                "files": len(fetched.files), "scanned_lines": report.scanned_lines_count,
                 "scanner_findings": len(report.findings),
                 "llm_comments": sum(1 for c in candidates if c["source"] == "llm"),
                 "confirmed": sum(1 for c in candidates if c["verification"] == "confirmed"),
