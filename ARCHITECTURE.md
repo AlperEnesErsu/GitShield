@@ -101,14 +101,14 @@ Geleneksel SAST çözümleri genellikle tüm kod tabanını tarar ve geliştiric
 
 - `scan_diff` her eklenen satır için önce kural motorunu, sonra (açıksa) entropi sezgisini çalıştırır.
 - **Satır içi bastırma:** Satırdaki `gitshield: ignore` (büyük/küçük harf duyarsız) o satırdaki tüm bulguları susturur; `gitshield: ignore[ID1,ID2]` yalnızca belirtilen kimlikleri susturur. Bastırma yalnızca aynı satıra etki eder.
-- **Dosya bazlı yoksayma:** `load_ignore_file` depo kökündeki `.gitshieldignore` desenlerini okur; `Scanner(ignore_patterns=...)` eşleşen dosyaları taramadan atlar (sonda `/` dizin öneki, başta `**/` kökü de kapsar, `/` içermeyen desen dosya adıyla eşleşir). CLI dosyayı otomatik yükler (`--no-ignore-file` ile kapatılır); web review hattı varsayılan `Scanner()` ile yoksayma uygulamaz.
+- **Dosya bazlı yoksayma:** `load_ignore_file` depo kökündeki `.gitshieldignore` desenlerini okur; `Scanner(ignore_patterns=...)` eşleşen dosyaları taramadan atlar (sonda `/` dizin öneki, başta `**/` kökü de kapsar, `/` içermeyen desen dosya adıyla eşleşir). CLI dosyayı otomatik yükler (`--no-ignore-file` ile kapatılır). Web review hattı da uygular (bkz. Bölüm 4.7).
 - Rapor; taranan dosya sayısı, taranan eklenen satır sayısı ve süre bilgilerini taşır.
 
 ### 4.4.1. Baseline (`core/baseline.py`)
 
 - **Parmak izi:** `sha256(rule_id | depo-göreli yol | boşlukları normalize edilmiş satır | tekrar sırası)`. Satır numarası bilerek dışarıda; ilgisiz düzenlemeler satırı kaydırınca kayıt geçerli kalır. Tekrar sırası, aynı dosyadaki birebir aynı satırların ayrı sayılmasını sağlar. SARIF `primaryLocationLineHash`'ten farkı: sır redakte edilmeden hash'lenir, böylece aynı satırda sırrın değiştirilmesi yeni bulgu olur. Dosyada yalnızca hash tutulur.
 - **Yazma birleştirir:** `--update-baseline` mevcut kayıtları korur; tek bir diff taraması deponun tamamını görmediği için dosyayı baştan yazmak kabul edilmiş bulguları düşürürdü. Kayıtlar dosya yolu ve kurala göre sıralanır, böylece incelemede diff okunur kalır.
-- **Uygulama yeri:** CLI, satır içi bastırma ve `.gitshieldignore`'dan sonra, `--fix` ve raporlamadan önce süzer; baseline'daki bulgular için LLM çağrısı yapılmaz ve çıkış kodunu etkilemez. Web review hattı baseline uygulamaz.
+- **Uygulama yeri:** CLI, satır içi bastırma ve `.gitshieldignore`'dan sonra, `--fix` ve raporlamadan önce süzer; baseline'daki bulgular için LLM çağrısı yapılmaz ve çıkış kodunu etkilemez. Web review hattı da uygular (bkz. Bölüm 4.7).
 - **`--all`:** Çalışma ağacını boş ağaçla (`EMPTY_TREE`) karşılaştırır; tüm izlenen satırlar eklenmiş sayılır. Baseline'ı ilk kez oluşturmak için kullanılır.
 
 ### 4.5. Düzeltme Önerisi (`ai/remediator.py`, CLI `--fix`)
@@ -143,6 +143,7 @@ Geleneksel SAST çözümleri genellikle tüm kod tabanını tarar ve geliştiric
 ### 4.7. Web Hattı (`gitshield/web/`)
 
 - **Review hattı (`review.py`):** Repo ve PR bilgisi GitHub'dan alınır; diff `GITSHIELD_MAX_DIFF_CHARS` ile sınırlanır (aşan dosyalar atlanmış olarak listelenir). Tarayıcı çalıştırılır (`Scanner().scan_diff`). Sır bulguları (≥6 karakter) hem açıklanmış diff'ten hem bulguların bağlamından LLM'e gitmeden önce `<REDACTED_SECRET>` ile değiştirilir. PR başlığı, açıklaması, diff ve yorumlar prompt'ta "güvenilmeyen veri" olarak etiketlenir.
+- **Repo tarama ayarları (`review_repo_config.py`):** `.gitshieldignore` ve `.gitshield-baseline.json` GitHub API ile PR'ın **base** commit'inden okunur, head'den değil; böylece bir PR kendi bulgularını yoksayma deseni veya baseline kaydı ekleyerek susturamaz (dosyadaki değişiklik merge'den sonra geçerli olur). Tarayıcı tüm diff'i tarar; sır değerleri bu süzmeden **önce** toplanır, yani yoksayılan veya baseline'da kabul edilmiş bir sır da LLM'e gitmeden redakte edilir. Ardından CLI'daki sırayla önce yoksayılan dosyaların, sonra baseline'daki bulgular düşülür; bunlar yorum olmaz ve LLM'e "tarayıcı bulgusu" olarak gitmez. Sayılar tarama adımında ve `stats.ignored_findings` / `stats.baselined_findings` alanlarında görünür. Dosya yoksa (404) ayar boştur; okunamayan veya bozuk dosya incelemeyi durdurmaz, tarama adımında bildirilir. LLM incelemesi yoksayılan dosyaları görmeye devam eder.
 - **Doğrulayıcı:** İkinci bir LLM geçişi incelemeyi doğrular (doğrulandı / belirsiz / reddedildi); yorumlar kullanıcı onayından sonra GitHub'a gönderilir.
 - **LLM bütçesi (`llm.py`):** Her LLM isteği `BudgetedProvider` üzerinden geçer; son 24 saatteki istekler veritabanından sayılır ve `GITSHIELD_MAX_LLM_CALLS_PER_DAY` aşılırsa istek yapılmaz (`0` = sınırsız).
 - **Otomatik inceleme bütçesi (`automation.py`):** Arka plan izleyicisinin başlatabileceği review sayısı `GITSHIELD_MAX_AUTO_REVIEWS_PER_DAY` ile sınırlanır; elle başlatılanlar sayılmaz.
@@ -243,4 +244,4 @@ GitHub Action bu kodları ayırt eder: `1` job'u başarısız yapar, `2` ve diğ
 - **Tedarik zinciri:** `DEPENDENCY` türü tanımlıdır ama kural yoktur.
 - **Doğrulama yok:** Bulunan sırların canlı olup olmadığı kontrol edilmez.
 - **Düzeltmeler:** `--fix` çıktısı öneridir ve uygulanmaz. `--interactive` öneriyi yalnızca kullanıcı onaylarsa dosyaya yazar; hiçbir öneri test edilmez.
-- **Baseline:** Yalnızca CLI'da (ve dolayısıyla GitHub Action'da) uygulanır; web review hattı baseline okumaz. Düzeltilen bulguların kayıtları otomatik temizlenmez.
+- **Baseline:** Web review hattı baseline'ı ve `.gitshieldignore`'u yalnızca PR'ın base commit'inden okur; PR'da eklenen kayıtlar o PR'ın incelemesini etkilemez. Düzeltilen bulguların kayıtları otomatik temizlenmez.
