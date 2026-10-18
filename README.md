@@ -168,7 +168,7 @@ tests/test_*.py
 secrets.example
 ```
 
-CLI dosyayı otomatik okur; `--no-ignore-file` ile kapatılır. Bu repo da kendi test dosyaları için bir `.gitshieldignore` kullanır.
+CLI dosyayı otomatik okur; `--no-ignore-file` ile kapatılır. Web panelindeki PR incelemeleri de dosyayı PR'ın base commit'inden okur. Bu repo da kendi test dosyaları için bir `.gitshieldignore` kullanır.
 
 #### Baseline (`.gitshield-baseline.json`)
 
@@ -184,6 +184,7 @@ git add .gitshield-baseline.json         # dosyayı inceleyip commit'leyin
 - Dosyada eşleşen metin veya sır **yoktur**; yalnızca parmak izi, kural kimliği, dosya yolu ve önem tutulur.
 - `--update-baseline` mevcut kayıtları korur ve yenilerini ekler (diff taramaları deponun yalnızca bir kısmını gördüğü için dosya baştan yazılmaz). Düzeltilmiş bulguların kayıtlarını temizlemek için dosyayı silip yeniden oluşturun.
 - CLI dosyayı otomatik okur; `--baseline DOSYA` ile başka bir yol, `--no-baseline` ile tüm bulgular. Bozuk veya bilinmeyen sürümlü bir baseline dosyası çıkış kodu 2 verir. GitHub Action da depoda commit'lenmiş baseline dosyasını kullanır.
+- Web panelindeki PR incelemeleri baseline'ı PR'ın **base** commit'inden okur: PR'ın kendi eklediği kayıtlar o PR'ı susturmaz, merge'den sonra geçerli olur. Kabul edilmiş sırlar yine de LLM'e gitmeden redakte edilir.
 
 #### Etkileşimli düzeltme (`--interactive`)
 
@@ -418,7 +419,7 @@ GitShield/
 │   ├── formatters/
 │   │   ├── console.py        # Rich terminal çıktısı
 │   │   └── sarif.py          # SARIF 2.1.0 üretici
-│   └── web/                  # FastAPI: GitHub API, review hattı, LLM sağlayıcıları, bütçe, SQLite
+│   └── web/                  # FastAPI: GitHub API, review hattı (repo ignore/baseline dahil), LLM sağlayıcıları, bütçe, SQLite
 ├── web/                      # React + Vite dashboard
 ├── tests/                    # Birim ve entegrasyon testleri
 ├── action.yml                # Composite GitHub Action
