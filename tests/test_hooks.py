@@ -103,8 +103,13 @@ def test_install_honours_core_hooks_path(repo):
 
 
 def test_script_quotes_interpreter_path():
-    script = hook_script(r"C:\it's here\python.exe")
-    assert "'C:/it'\\''s here/python.exe'" in script
+    script = hook_script("/opt/it's here/python")
+    assert "'/opt/it'\\''s here/python'" in script
+
+
+@pytest.mark.skipif(os.name != "nt", reason="backslash is a path separator only on Windows")
+def test_script_uses_forward_slashes_on_windows():
+    assert "'C:/venv dir/python.exe'" in hook_script(r"C:\venv dir\python.exe")
 
 
 def test_hook_blocks_commit_with_secret_and_allows_clean_commit(repo):
