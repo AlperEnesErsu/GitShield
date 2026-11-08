@@ -277,6 +277,31 @@ Yerleşik OWASP kuralları `file_patterns` ile belirli uzantılara sınırlıdı
 
 ---
 
+## 🪝 Pre-commit Hook
+
+Sırları PR'a gelmeden, commit anında yakalamak için GitShield her commit'te `gitshield scan --staged` çalıştırabilir. CRITICAL veya HIGH bulgu varsa commit durur. Baseline, `.gitshieldignore` ve `gitshield: ignore` yorumları burada da geçerlidir.
+
+**Doğrudan git hook'u olarak:**
+
+```bash
+gitshield hook install     # .git/hooks/pre-commit dosyasını yazar (core.hooksPath'e uyar)
+gitshield hook uninstall   # kaldırır; --force ile yerine konmuş eski hook'u geri getirir
+```
+
+Hook, kendisini kuran Python yorumlayıcısını kullanır; bu yüzden sanal ortamı PATH'te olmayan git arayüzlerinde de çalışır. O yorumlayıcı silinirse PATH'teki `gitshield` komutuna düşer. Depoda GitShield'a ait olmayan bir `pre-commit` hook'u varsa kurulum durur; `--force` o hook'u `pre-commit.gitshield-backup` adıyla saklayıp yerine yazar. Tek seferlik atlamak için `git commit --no-verify`.
+
+**[pre-commit](https://pre-commit.com) çerçevesiyle** (`.pre-commit-config.yaml`):
+
+```yaml
+repos:
+  - repo: https://github.com/AlperEnesErsu/GitShield
+    rev: <etiket veya commit>
+    hooks:
+      - id: gitshield
+```
+
+---
+
 ## 🤖 GitHub Action
 
 Depoda `action.yml` composite bir GitHub Action olarak bulunur. Pull request'in diff'ini (`base...HEAD`) tarar, SARIF raporu üretir ve GitHub Code Scanning'e yükler.
@@ -401,7 +426,8 @@ Bildirim kanalları (`GITSHIELD_SLACK_WEBHOOK`, `GITSHIELD_DISCORD_WEBHOOK`, `GI
 ```
 GitShield/
 ├── gitshield/
-│   ├── cli.py                # Typer CLI: scan, web, version
+│   ├── cli.py                # Typer CLI: scan, hook install/uninstall, web, version
+│   ├── hooks.py              # git pre-commit hook kurulumu ve kaldırılması
 │   ├── core/
 │   │   ├── diff_parser.py    # git diff çağrısı, untracked dosyalar, hunk ayrıştırma
 │   │   ├── scanner.py        # Tarama hattı, satır içi bastırma, lockfile kuralı
@@ -423,6 +449,7 @@ GitShield/
 ├── web/                      # React + Vite dashboard
 ├── tests/                    # Birim ve entegrasyon testleri
 ├── action.yml                # Composite GitHub Action
+├── .pre-commit-hooks.yaml    # pre-commit çerçevesi için hook tanımı
 ├── .gitshieldignore          # Kendi taramasında yoksayılan test dosyaları
 ├── .github/workflows/        # CI (test, ruff, mypy, self-scan, web build) ve Dependabot
 ├── .env.example              # Ortam değişkenleri şablonu
@@ -460,6 +487,7 @@ CI (`.github/workflows/ci.yml`) testleri Ubuntu'da Python 3.11–3.13, Windows't
 - [ ] Satır bazlı regex yerine AST tabanlı analiz (ör. Python `ast` ile girdi-çıktı akışı) ve daha az yanlış pozitif.
 - [ ] Sır canlılık doğrulaması: sızan bir anahtarın hâlâ geçerli olup olmadığını sağlayıcı API'si üzerinden kontrol etmek.
 - [x] Baseline dosyası: mevcut bulguları kabul edip yalnızca yeni bulguları raporlamak (`--update-baseline`, `--all`).
+- [x] Pre-commit hook: `gitshield hook install` ve pre-commit çerçevesi için `.pre-commit-hooks.yaml`.
 - [ ] OWASP kurallarının Go, Java, PHP ve Ruby gibi diğer dillere genişletilmesi.
 - [ ] Tedarik zinciri kuralları: `RuleType.DEPENDENCY` tanımlı, ancak henüz hiçbir yerleşik kural kullanmıyor.
 

@@ -1,0 +1,18 @@
+# Hook definition for the pre-commit framework (https://pre-commit.com).
+# Use it from another repository's .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/AlperEnesErsu/GitShield
+#       rev: <tag or commit>
+#       hooks:
+#         - id: gitshield
+#
+# The scan reads the staged diff itself, so pre-commit does not pass file names.
+- id: gitshield
+  name: GitShield (secrets and OWASP patterns in staged changes)
+  description: Blocks the commit when staged changes add CRITICAL or HIGH findings.
+  entry: gitshield scan --staged
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]

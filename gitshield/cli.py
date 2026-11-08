@@ -20,6 +20,7 @@ from gitshield.core.models import ScanReport
 from gitshield.core.scanner import Scanner, load_ignore_file
 from gitshield.formatters.console import print_report_to_console
 from gitshield.formatters.sarif import build_sarif
+from gitshield.hooks import HookError, install_hook, uninstall_hook
 from gitshield.interactive import review_findings
 from gitshield.rules.engine import RuleEngine
 
@@ -256,6 +257,45 @@ def web(
 
     console.print(f"[bold cyan]GitShield web[/bold cyan] -> http://{host}:{port}")
     uvicorn.run("gitshield.web.app:app", host=host, port=port, reload=reload)
+
+
+hook_app = typer.Typer(help="Run GitShield on every commit as a git pre-commit hook.")
+app.add_typer(hook_app, name="hook")
+
+
+@hook_app.command("install")
+def hook_install(
+    path: Path = typer.Argument(Path("."), help="Git repository to install the hook into.", exists=True),
+    force: bool = typer.Option(
+        False, "--force", help="Replace an existing pre-commit hook (it is backed up, and restored on uninstall)."
+    ),
+):
+    """Install a pre-commit hook that runs `gitshield scan --staged` and blocks commits with CRITICAL/HIGH findings."""
+    try:
+        result = install_hook(path.resolve(), force=force)
+    except HookError as e:
+        err_console.print(f"[bold red]Hook not installed:[/bold red] {e}")
+        raise typer.Exit(code=EXIT_ERROR) from e
+    if result.backup:
+        console.print(f"[yellow]Existing hook moved to {result.backup}.[/yellow]")
+    console.print(
+        f"[bold green]✔ Pre-commit hook installed:[/bold green] {result.path}\n"
+        "[dim]Skip it once with `git commit --no-verify`; accept a finding with `gitshield: ignore` or the baseline.[/dim]"
+    )
+
+
+@hook_app.command("uninstall")
+def hook_uninstall(
+    path: Path = typer.Argument(Path("."), help="Git repository to remove the hook from.", exists=True),
+):
+    """Remove GitShield's pre-commit hook (and restore the hook it replaced, if any)."""
+    try:
+        result = uninstall_hook(path.resolve())
+    except HookError as e:
+        err_console.print(f"[bold red]Hook not removed:[/bold red] {e}")
+        raise typer.Exit(code=EXIT_ERROR) from e
+    restored = " Previous hook restored." if result.backup else ""
+    console.print(f"[bold green]✔ Pre-commit hook removed:[/bold green] {result.path}.{restored}")
 
 
 @app.command()
