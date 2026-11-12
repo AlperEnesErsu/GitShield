@@ -25,11 +25,11 @@ export function RepoPage() {
   const fullName = `${owner}/${repo}`;
   const navigate = useNavigate();
 
-  const overview = useAsync(() => api.overview(fullName), [fullName]);
-  const pulls = useAsync(() => api.pulls(fullName), [fullName]);
-  const issues = useAsync(() => api.issues(fullName), [fullName]);
-  const drafts = useAsync(() => api.draftIssues(fullName), [fullName]);
-  const settings = useAsync(() => api.repoSettings(fullName), [fullName]);
+  const overview = useAsync(() => api.overview(fullName), [fullName], `overview:${fullName}`);
+  const pulls = useAsync(() => api.pulls(fullName), [fullName], `pulls:${fullName}`);
+  const issues = useAsync(() => api.issues(fullName), [fullName], `issues:${fullName}`);
+  const drafts = useAsync(() => api.draftIssues(fullName), [fullName], `draftIssues:${fullName}`);
+  const settings = useAsync(() => api.repoSettings(fullName), [fullName], `repoSettings:${fullName}`);
   const saveSettings = async (patch: { auto_review?: boolean; include_drafts?: boolean }) => {
     try {
       const next = await api.setRepoSettings(fullName, patch);

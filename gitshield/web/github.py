@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import hashlib
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -85,6 +87,9 @@ MAX_REPO_PAGES = 10
 MAX_PR_FILES = 300
 REPO_CACHE_TTL_SEC = 60
 READ_TTL_SEC = 30
+VIEWER_TTL_SEC = 300
+# Weekly commit counts change slowly and GitHub computes them on demand.
+PARTICIPATION_TTL_SEC = 600
 
 OPEN_PULLS_DETAIL_QUERY = """
 query($owner: String!, $name: String!) {
@@ -154,6 +159,9 @@ class GitHubClient:
             },
         )
         self._repo_cache: tuple[float, dict[str, Any]] | None = None
+        self._repo_task: asyncio.Task[dict[str, Any]] | None = None
+        # Called with every freshly fetched repository list (the app persists it across restarts).
+        self.on_repos: Callable[[dict[str, Any]], None] | None = None
         # Short-lived cache for reads that several pages repeat (inbox, repo page, metrics).
         self._read_cache: dict[tuple, tuple[float, Any]] = {}
 
@@ -205,14 +213,52 @@ class GitHubClient:
     # ---- Viewer & repositories -------------------------------------------------
 
     async def viewer(self) -> dict[str, Any]:
-        resp = await self._request("GET", "/user")
-        return resp.json()
+        async def load() -> dict[str, Any]:
+            return (await self._request("GET", "/user")).json()
+
+        return await self._cached(("viewer",), VIEWER_TTL_SEC, load)
+
+    def token_fingerprint(self) -> str:
+        """Identifies the token without storing it, so a persisted cache is not shown to another account."""
+        return hashlib.sha256(self.token.encode()).hexdigest()[:16]
+
+    def seed_repos(self, result: dict[str, Any]) -> None:
+        """Start from a list saved by an earlier run: served at once, refreshed on first use."""
+        self._repo_cache = (float("-inf"), result)
+
+    def repos_age_sec(self) -> float | None:
+        """Seconds since the repository list was fetched; None when it comes from an earlier run."""
+        if not self._repo_cache or self._repo_cache[0] == float("-inf"):
+            return None
+        return time.monotonic() - self._repo_cache[0]
+
+    def repos_stale(self) -> bool:
+        age = self.repos_age_sec()
+        return self._repo_cache is not None and (age is None or age >= REPO_CACHE_TTL_SEC)
 
     async def list_repos(self, refresh: bool = False) -> dict[str, Any]:
-        """All repositories the token can see, with open PR/issue counts (GraphQL)."""
-        if not refresh and self._repo_cache and time.monotonic() - self._repo_cache[0] < REPO_CACHE_TTL_SEC:
-            return self._repo_cache[1]
+        """All repositories the token can see, with open PR/issue counts (GraphQL).
 
+        The query takes seconds, so a cached list is always answered immediately; once it is
+        older than the TTL a background refresh replaces it for the next caller. Only the very
+        first call (nothing cached) and ``refresh=True`` wait for GitHub.
+        """
+        if self._repo_cache and not refresh:
+            if self.repos_stale():
+                self._start_repo_refresh()
+            return self._repo_cache[1]
+        # shield: one caller going away must not cancel the fetch the others are waiting on.
+        return await asyncio.shield(self._start_repo_refresh())
+
+    def _start_repo_refresh(self) -> "asyncio.Task[dict[str, Any]]":
+        """Single flight: concurrent callers share one fetch instead of each running the query."""
+        if self._repo_task is None or self._repo_task.done():
+            self._repo_task = asyncio.create_task(self._fetch_repos())
+            # A failed background refresh keeps the stale list; mark the exception as seen.
+            self._repo_task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        return self._repo_task
+
+    async def _fetch_repos(self) -> dict[str, Any]:
         repos: list[dict[str, Any]] = []
         cursor: str | None = None
         login = ""
@@ -227,6 +273,8 @@ class GitHubClient:
 
         result = {"login": login, "repos": repos}
         self._repo_cache = (time.monotonic(), result)
+        if self.on_repos:
+            self.on_repos(result)
         return result
 
     async def _graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
@@ -237,7 +285,8 @@ class GitHubClient:
         return payload["data"]
 
     async def repo_overview(self, owner: str, repo: str) -> dict[str, Any]:
-        data = await self._graphql(REPO_OVERVIEW_QUERY, {"owner": owner, "name": repo})
+        data = await self._cached(("overview", owner, repo), READ_TTL_SEC, lambda: self._graphql(
+            REPO_OVERVIEW_QUERY, {"owner": owner, "name": repo}))
         if not data.get("repository"):
             raise GitHubError(404, f"{owner}/{repo} not found")
         return data["repository"]
@@ -256,10 +305,15 @@ class GitHubClient:
 
     async def participation(self, owner: str, repo: str) -> dict[str, list[int]] | None:
         """Weekly commit counts for the last 52 weeks; None while GitHub is still computing them."""
+        key = ("participation", owner, repo)
+        hit = self._read_cache.get(key)
+        if hit and time.monotonic() - hit[0] < PARTICIPATION_TTL_SEC:
+            return hit[1]
         resp = await self._request("GET", f"/repos/{owner}/{repo}/stats/participation")
         if resp.status_code == 202 or not resp.content:
-            return None
-        return resp.json()
+            return None  # not cached: the next call should ask again
+        self._read_cache[key] = (time.monotonic(), resp.json())
+        return self._read_cache[key][1]
 
     # ---- Pull requests ---------------------------------------------------------
 

@@ -54,7 +54,7 @@ const STALE_COLUMNS: Column<StalePull>[] = [
 export function MetricsPage() {
   const [days, setDays] = useState<7 | 30 | 90>(30);
   const [sla, setSla] = useState<1 | 3 | 7>(3);
-  const metrics = useAsync<Metrics>(() => api.metrics(days, sla), [days, sla]);
+  const metrics = useAsync<Metrics>(() => api.metrics(days, sla), [days, sla], `metrics:${days}:${sla}`);
   const m = metrics.data;
 
   return (

@@ -26,7 +26,7 @@ function readPref(): boolean {
 /** Shares one inbox fetch between the nav badge and the inbox page; refreshes every minute
  *  and raises a desktop notification for newly ready / failed reviews when enabled. */
 export function InboxProvider({ children }: { children: ReactNode }) {
-  const inbox = useAsync(() => api.inbox(), []);
+  const inbox = useAsync(() => api.inbox(), [], "inbox");
   const { reload, data } = inbox;
   const [desktopNotify, setPref] = useState(readPref);
   const seen = useRef<Set<string> | null>(null);
