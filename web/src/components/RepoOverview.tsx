@@ -81,7 +81,7 @@ export function RepoOverviewSection({ overview, error, pulls, onRetry }: {
           {weeks ? (
             <ColumnChart points={weeks} />
           ) : (
-            <div className="viz-empty">GitHub istatistikleri hazırlıyor; birkaç saniye sonra yenileyin.</div>
+            <div className="viz-empty">GitHub istatistikleri hazırlıyor; hazır olunca kendiliğinden görünecek.</div>
           )}
         </ChartCard>
         <ChartCard title="Diller" subtitle={`${o.languages.length} dil`}>

@@ -331,6 +331,10 @@ export interface Metrics {
   days: number;
   sla_days: number;
   repos_checked: number;
+  /** Active repos left out because the account has more than the server reads at once. */
+  repos_skipped: number;
+  /** Repos with more merges in the window than the server pages through; their counts are a floor. */
+  truncated: string[];
   errors: { repo: string; error: string }[];
   merge: {
     count: number;

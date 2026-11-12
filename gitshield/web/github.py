@@ -139,14 +139,17 @@ query($owner: String!, $name: String!) {
 """
 
 MERGED_PULLS_QUERY = """
-query($owner: String!, $name: String!) {
+query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(states: MERGED, first: 40, orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes { number title createdAt mergedAt author { login } }
+    pullRequests(states: MERGED, first: 100, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number title createdAt mergedAt updatedAt author { login } }
     }
   }
 }
 """
+# Upper bound per repository and window: 10 pages of 100 merged PRs.
+MAX_MERGED_PAGES = 10
 
 
 def rate_limit_message(resp: httpx.Response) -> str | None:
@@ -332,10 +335,31 @@ class GitHubClient:
         nodes = ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
         return {n["number"]: n for n in nodes}
 
-    async def merged_pulls(self, owner: str, repo: str) -> list[dict[str, Any]]:
-        data = await self._cached(("merged", owner, repo), READ_TTL_SEC, lambda: self._graphql(
-            MERGED_PULLS_QUERY, {"owner": owner, "name": repo}))
-        return ((data.get("repository") or {}).get("pullRequests") or {}).get("nodes", [])
+    async def merged_pulls(self, owner: str, repo: str, since: str | None = None) -> dict[str, Any]:
+        """Merged PRs, most recently updated first, back to ``since`` (an ISO timestamp).
+
+        Returns ``{"nodes": [...], "truncated": bool}``. GitHub cannot sort by merge time, but
+        a PR merged after ``since`` was also updated after it, so paging stops at the first
+        page whose last PR was updated before ``since``. ``truncated`` is true when the page
+        cap was reached first, i.e. older merges inside the window may be missing.
+        Without ``since`` only the first page is read.
+        """
+        async def load() -> dict[str, Any]:
+            nodes: list[dict[str, Any]] = []
+            cursor: str | None = None
+            for _ in range(MAX_MERGED_PAGES if since else 1):
+                data = await self._graphql(MERGED_PULLS_QUERY, {"owner": owner, "name": repo, "cursor": cursor})
+                conn = ((data.get("repository") or {}).get("pullRequests") or {})
+                page = conn.get("nodes") or []
+                nodes.extend(page)
+                info = conn.get("pageInfo") or {}
+                # ISO-8601 UTC timestamps in one format compare correctly as strings.
+                if not info.get("hasNextPage") or not since or not page or page[-1]["updatedAt"] < since:
+                    return {"nodes": nodes, "truncated": False}
+                cursor = info["endCursor"]
+            return {"nodes": nodes, "truncated": True}
+
+        return await self._cached(("merged", owner, repo, since), READ_TTL_SEC, load)
 
     async def participation(self, owner: str, repo: str) -> dict[str, list[int]] | None:
         """Weekly commit counts for the last 52 weeks; None while GitHub is still computing them."""
