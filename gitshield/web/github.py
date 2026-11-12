@@ -83,6 +83,33 @@ query($owner: String!, $name: String!) {
 }
 """
 
+_BY_REPO = "(maxRepositories: 25) { repository { nameWithOwner isPrivate } contributions { totalCount } }"
+
+# Without from/to GitHub answers for the last year, ending today.
+ACTIVITY_QUERY = """
+query {
+  viewer {
+    login
+    contributionsCollection {
+      totalCommitContributions
+      totalPullRequestContributions
+      totalPullRequestReviewContributions
+      totalIssueContributions
+      restrictedContributionsCount
+      contributionCalendar {
+        totalContributions
+        weeks { contributionDays { date contributionCount } }
+      }
+      commitContributionsByRepository BY_REPO
+      pullRequestContributionsByRepository BY_REPO
+      pullRequestReviewContributionsByRepository BY_REPO
+      issueContributionsByRepository BY_REPO
+    }
+  }
+}
+""".replace(" BY_REPO", _BY_REPO)
+
+ACTIVITY_TTL_SEC = 600
 MAX_REPO_PAGES = 10
 MAX_PR_FILES = 300
 REPO_CACHE_TTL_SEC = 60
@@ -217,6 +244,13 @@ class GitHubClient:
             return (await self._request("GET", "/user")).json()
 
         return await self._cached(("viewer",), VIEWER_TTL_SEC, load)
+
+    async def activity(self, refresh: bool = False) -> dict[str, Any]:
+        """The viewer's contribution calendar and per-repository totals for the last year."""
+        if refresh:
+            self._read_cache.pop(("activity",), None)
+        data = await self._cached(("activity",), ACTIVITY_TTL_SEC, lambda: self._graphql(ACTIVITY_QUERY, {}))
+        return data["viewer"]
 
     def token_fingerprint(self) -> str:
         """Identifies the token without storing it, so a persisted cache is not shown to another account."""

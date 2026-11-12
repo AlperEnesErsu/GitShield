@@ -14,6 +14,7 @@ from gitshield.web.config import settings
 from gitshield.web.db import Database
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.routes import (
+    activity,
     automation,
     ci,
     dependency_batch,
@@ -95,6 +96,7 @@ app.include_router(fix_prs.router)
 app.include_router(memory.router)
 app.include_router(dependency_batch.router)
 app.include_router(metrics.router)
+app.include_router(activity.router)
 app.include_router(notifications.router)
 app.include_router(automation.router)
 app.include_router(draft_issues.router)

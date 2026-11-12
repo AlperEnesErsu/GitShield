@@ -4,6 +4,7 @@ from gitshield.web.app import app
 
 EXPECTED = {
     ("DELETE", "/api/memory/{memory_id}"),
+    ("GET", "/api/activity"),
     ("GET", "/api/automation"),
     ("GET", "/api/gamification"),
     ("GET", "/api/inbox"),
