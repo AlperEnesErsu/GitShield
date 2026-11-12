@@ -509,7 +509,7 @@ export const api = {
     request<RepoSettings>("PUT", `${repoPath(repo)}/settings`, patch),
   status: () => request<Status>("GET", "/status"),
   repos: (refresh = false) =>
-    request<{ login: string; repos: Repo[] }>("GET", `/repos${refresh ? "?refresh=true" : ""}`),
+    request<{ login: string; repos: Repo[]; stale?: boolean }>("GET", `/repos${refresh ? "?refresh=true" : ""}`),
   overview: (repo: string) => request<RepoOverview>("GET", `${repoPath(repo)}/overview`),
   pulls: (repo: string) => request<PullSummary[]>("GET", `${repoPath(repo)}/pulls`),
   issues: (repo: string) => request<Issue[]>("GET", `${repoPath(repo)}/issues`),

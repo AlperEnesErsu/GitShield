@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, LanguageShare, Repo } from "../api";
 import {
@@ -127,8 +127,35 @@ const COLUMNS: Column<Repo>[] = [
 
 export function ReposPage() {
   const navigate = useNavigate();
-  const [refresh, setRefresh] = useState(0);
-  const repos = useAsync(() => api.repos(refresh > 0), [refresh]);
+  // Set by the "Yenile" button; the next load asks GitHub directly instead of the server cache.
+  const force = useRef(false);
+  const repos = useAsync(() => {
+    const refresh = force.current;
+    force.current = false;
+    return api.repos(refresh);
+  }, [], "repos");
+  const forceRefresh = () => {
+    force.current = true;
+    repos.reload();
+  };
+
+  // The server answers at once with its last list and refreshes in the background; ask again
+  // shortly to pick up the fresh one. Capped so a failing refresh does not poll forever.
+  const staleRetries = useRef(0);
+  const stale = repos.data?.stale === true;
+  useEffect(() => {
+    if (repos.loading) return;
+    if (!stale) {
+      staleRetries.current = 0;
+      return;
+    }
+    if (staleRetries.current >= 4) return;
+    const t = setTimeout(() => {
+      staleRetries.current++;
+      repos.reload();
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [stale, repos.loading, repos.reload]);
   const [query, setQuery] = useState("");
   const [onlyWithPrs, setOnlyWithPrs] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -211,14 +238,13 @@ export function ReposPage() {
           <h2>Repolar</h2>
           <p className="muted small">Erişimin olan tüm repolar, açık iş yükü ve GitShield bulguları.</p>
         </div>
-        <button className="btn btn-sm" onClick={() => setRefresh((n) => n + 1)} disabled={repos.loading}>
-          <RefreshIcon size={14} className={repos.loading ? "spin" : undefined} /> Yenile
+        <button className="btn btn-sm" onClick={forceRefresh} disabled={repos.loading}>
+          <RefreshIcon size={14} className={repos.loading || stale ? "spin" : undefined} /> Yenile
         </button>
       </div>
 
-      {repos.error ? (
-        <ErrorBox error={repos.error} onRetry={repos.reload} />
-      ) : repos.loading && !repos.data ? (
+      {repos.error && <ErrorBox error={repos.error} onRetry={repos.reload} />}
+      {repos.error && !repos.data ? null : repos.loading && !repos.data ? (
         <Loading label="Repolar getiriliyor" />
       ) : (
         <>
