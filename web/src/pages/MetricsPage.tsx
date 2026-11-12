@@ -54,7 +54,7 @@ const STALE_COLUMNS: Column<StalePull>[] = [
 export function MetricsPage() {
   const [days, setDays] = useState<7 | 30 | 90>(30);
   const [sla, setSla] = useState<1 | 3 | 7>(3);
-  const metrics = useAsync<Metrics>(() => api.metrics(days, sla), [days, sla]);
+  const metrics = useAsync<Metrics>(() => api.metrics(days, sla), [days, sla], `metrics:${days}:${sla}`);
   const m = metrics.data;
 
   return (
@@ -96,7 +96,7 @@ export function MetricsPage() {
 
             <div className="chart-grid">
               <ChartCard title="Haftalık merge" subtitle={`Son ${days} gün · birleştirilen PR sayısı`} className="span-2">
-                {m.merge.weekly.length ? (
+                {m.merge.count ? (
                   <ColumnChart unit="merge" color="var(--series-2)"
                                points={m.merge.weekly.map((w) => ({ date: new Date(w.week), value: w.merged }))} />
                 ) : <div className="viz-empty">Bu dönemde merge yok.</div>}
@@ -114,7 +114,7 @@ export function MetricsPage() {
                 }))} />
               </ChartCard>
               <ChartCard title="Haftalık GitShield review" subtitle={`Son ${days} gün`} className="span-2">
-                {m.gitshield.weekly.length ? (
+                {m.gitshield.reviews ? (
                   <ColumnChart unit="review"
                                points={m.gitshield.weekly.map((w) => ({ date: new Date(w.week), value: w.reviews }))} />
                 ) : <div className="viz-empty">Bu dönemde review yok.</div>}
@@ -128,8 +128,11 @@ export function MetricsPage() {
             <DataTable rows={m.open.over_sla} columns={STALE_COLUMNS} rowKey={(r) => `${r.repo}#${r.number}`}
                        initialSort={{ key: "age", dir: "desc" }} empty={`${sla} günden uzun bekleyen PR yok. 🎉`} />
             <p className="small muted">
-              {m.repos_checked} aktif repo incelendi (en fazla 12, son push'a göre){m.errors.length > 0 &&
-                ` · okunamayan: ${m.errors.map((e) => e.repo).join(", ")}`} · {formatNumber(m.merge.count)} merge
+              {m.repos_checked} aktif repo incelendi
+              {m.repos_skipped > 0 && ` (${m.repos_skipped} repo sınır nedeniyle dışarıda kaldı)`}
+              {m.errors.length > 0 && ` · okunamayan: ${m.errors.map((e) => e.repo).join(", ")}`}
+              {m.truncated.length > 0 &&
+                ` · merge sayısı eksik olabilir: ${m.truncated.join(", ")}`} · {formatNumber(m.merge.count)} merge
             </p>
           </>
         )}

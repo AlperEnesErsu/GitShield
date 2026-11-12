@@ -39,6 +39,7 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
+  --series-4: #eda100;
   --chart-other: #c3c2b7;
   --grid: #eeede8;
   --axis: #d9d8d2;
@@ -88,6 +89,7 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
+    --series-4: #c98500;
     --chart-other: #5d6575;
     --grid: #2a303a;
     --axis: #3b4250;
@@ -129,6 +131,7 @@
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
+  --series-4: #c98500;
   --chart-other: #5d6575;
   --grid: #2a303a;
   --axis: #3b4250;
@@ -347,6 +350,7 @@ code, .mono { font-family: var(--mono); font-size: 0.9em; }
   .chart-grid > .chart-card { grid-column: span 1; }
   .chart-grid > .chart-card.span-2 { grid-column: span 2; }
 }
+.chart-grid > .chart-card.span-all { grid-column: 1 / -1; }
 .chart-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   padding: 18px 20px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 16px; min-width: 0;
@@ -1387,3 +1391,21 @@ kbd {
   .result-todo { border-left: 0; border-top: 1px solid var(--border); }
   .result-headline { font-size: 20px; }
 }
+
+/* Contribution calendar (GitHub activity): sequential single-hue ramp on --series-1 */
+.cal { overflow-x: auto; padding-bottom: 2px; }
+.cal-inner { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 8px; min-width: 640px; }
+.cal-months, .cal-grid { display: grid; grid-template-columns: repeat(var(--weeks), minmax(0, 1fr)); gap: 3px; }
+.cal-months span { font-size: 10px; color: var(--text-muted); white-space: nowrap; overflow: visible; }
+.cal-days { display: grid; grid-template-rows: repeat(7, minmax(0, 1fr)); gap: 3px; font-size: 10px; color: var(--text-muted); }
+.cal-days span { display: flex; align-items: center; line-height: 1; }
+.cal-week { display: grid; grid-template-rows: repeat(7, auto); gap: 3px; }
+.cal-cell { display: block; aspect-ratio: 1; border-radius: 3px; background: var(--surface-3); }
+.cal-none { background: transparent; }
+.cal-1 { background: color-mix(in srgb, var(--series-1) 28%, var(--surface-3)); }
+.cal-2 { background: color-mix(in srgb, var(--series-1) 52%, var(--surface-3)); }
+.cal-3 { background: color-mix(in srgb, var(--series-1) 76%, var(--surface-3)); }
+.cal-4 { background: var(--series-1); }
+.cal-grid .cal-cell:not(.cal-none):hover { outline: 2px solid var(--text); outline-offset: 1px; }
+.cal-legend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 10px; font-size: 11px; color: var(--text-muted); }
+.cal-legend .cal-cell { width: 12px; }

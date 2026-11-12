@@ -36,13 +36,14 @@ class MetricsGitHub:
             {"nameWithOwner": "acme/old", "isArchived": True, "pushedAt": iso(5), "pullRequests": {"totalCount": 1}},
         ]}
 
-    async def merged_pulls(self, owner, repo):
+    async def merged_pulls(self, owner, repo, since=None):
         assert repo == "app", "archived repos are skipped"
-        return [
+        assert since and since.endswith("T00:00:00Z"), "the window start is passed down for paging"
+        return {"truncated": True, "nodes": [
             {"number": 1, "title": "a", "createdAt": iso(50), "mergedAt": iso(40), "author": {"login": "x"}},
             {"number": 2, "title": "b", "createdAt": iso(30), "mergedAt": iso(10), "author": {"login": "x"}},
             {"number": 3, "title": "old", "createdAt": iso(24 * 90), "mergedAt": iso(24 * 80), "author": {"login": "x"}},
-        ]
+        ]}
 
     async def list_pulls(self, owner, repo, state="open"):
         def pr(n, age_h, draft=False):
@@ -55,7 +56,12 @@ def test_build_metrics(tmp_path, open_db):
     db = open_db(tmp_path / "t.db")
     m = asyncio.run(build_metrics(db, MetricsGitHub(), days=30, sla_days=3))
 
-    assert m["repos_checked"] == 1
+    assert m["repos_checked"] == 1 and m["repos_skipped"] == 0
+    assert m["truncated"] == ["acme/app"]
+    weekly = m["merge"]["weekly"]
+    assert len(weekly) in (5, 6), "every week of the 30-day window is present"
+    assert sum(w["merged"] for w in weekly) == 2 and any(w["merged"] == 0 for w in weekly)
+    assert len(m["gitshield"]["weekly"]) == len(weekly)
     assert m["merge"]["count"] == 2, "merges older than the window are excluded"
     assert m["merge"]["median_hours"] == 15.0  # 10h and 20h
     assert m["open"]["count"] == 2, "draft PRs do not count as waiting"
@@ -93,3 +99,18 @@ def test_open_pull_without_a_timestamp_is_skipped(tmp_path, open_db):
     db = open_db(tmp_path / "t.db")
     m = asyncio.run(build_metrics(db, PullWithoutTimestampGitHub(), days=30, sla_days=3))
     assert m["open"]["count"] == 1, "the PR with a usable timestamp still counts"
+
+
+def test_weeks_between_includes_both_ends():
+    from gitshield.web.metrics import weeks_between
+    start = datetime(2026, 1, 7, tzinfo=UTC)   # Wednesday
+    end = datetime(2026, 1, 26, tzinfo=UTC)    # Monday
+    assert weeks_between(start, end) == ["2026-01-05", "2026-01-12", "2026-01-19", "2026-01-26"]
+
+
+def test_gitshield_weekly_reports_empty_weeks():
+    from gitshield.web.metrics import gitshield_metrics
+    g = gitshield_metrics([{"status": "ready", "created_at": "2026-01-13T10:00:00+00:00", "progress": []}],
+                          ["2026-01-05", "2026-01-12", "2026-01-19"])
+    assert g["weekly"] == [{"week": "2026-01-05", "reviews": 0}, {"week": "2026-01-12", "reviews": 1},
+                           {"week": "2026-01-19", "reviews": 0}]

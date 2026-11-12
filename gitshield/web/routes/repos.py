@@ -11,7 +11,10 @@ router = APIRouter()
 
 @router.get("/api/repos")
 async def list_repos(request: Request, refresh: bool = False) -> dict[str, Any]:
-    data = await gh(request).list_repos(refresh=refresh)
+    client = gh(request)
+    data = await client.list_repos(refresh=refresh)
+    # True when this answer is an older list and a refresh is running; the UI asks again shortly.
+    stale = client.repos_stale()
     stats = db(request).repo_stats()
     repos = []
     for r in data["repos"]:
@@ -40,7 +43,7 @@ async def list_repos(request: Request, refresh: bool = False) -> dict[str, Any]:
             "draft_issues": s.get("draft_issues", 0),
             "last_review_at": s.get("last_review_at"),
         })
-    return {"login": data["login"], "repos": repos}
+    return {"login": data["login"], "repos": repos, "stale": stale}
 
 
 def _languages(conn: dict[str, Any]) -> list:
