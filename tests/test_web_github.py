@@ -138,3 +138,38 @@ def test_viewer_is_cached():
 
     asyncio.run(scenario())
     assert calls == ["/user"]
+
+
+def _merged_client(pages, calls):
+    def handler(request):
+        import json
+        cursor = json.loads(request.content)["variables"]["cursor"]
+        calls.append(cursor)
+        index = int(cursor or 0)
+        nodes = [{"number": i, "updatedAt": ts} for i, ts in enumerate(pages[index])]
+        return httpx.Response(200, json={"data": {"repository": {"pullRequests": {
+            "pageInfo": {"hasNextPage": index + 1 < len(pages), "endCursor": str(index + 1)},
+            "nodes": nodes}}}})
+
+    gh = GitHubClient(token="t", base_url="https://api.github.test")
+    gh._client = httpx.AsyncClient(base_url="https://api.github.test", transport=httpx.MockTransport(handler))
+    return gh
+
+
+def test_merged_pulls_pages_back_to_the_window_start():
+    calls = []
+    pages = [["2026-03-10T00:00:00Z", "2026-03-05T00:00:00Z"],
+             ["2026-03-03T00:00:00Z", "2026-02-20T00:00:00Z"],   # last one is before the window
+             ["2026-01-01T00:00:00Z"]]
+    gh = _merged_client(pages, calls)
+    result = asyncio.run(gh.merged_pulls("acme", "app", "2026-03-01T00:00:00Z"))
+    assert calls == [None, "1"], "the third page is never requested"
+    assert len(result["nodes"]) == 4 and result["truncated"] is False
+
+
+def test_merged_pulls_reports_truncation_at_the_page_cap(monkeypatch):
+    monkeypatch.setattr("gitshield.web.github.MAX_MERGED_PAGES", 2)
+    calls = []
+    gh = _merged_client([["2026-03-10T00:00:00Z"]] * 5, calls)
+    result = asyncio.run(gh.merged_pulls("acme", "app", "2026-03-01T00:00:00Z"))
+    assert len(calls) == 2 and result["truncated"] is True

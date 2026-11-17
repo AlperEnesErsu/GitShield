@@ -10,7 +10,7 @@ interface TipState {
   content: ReactNode;
 }
 
-function useTooltip() {
+export function useTooltip() {
   const [tip, setTip] = useState<TipState | null>(null);
   const show = (e: { clientX: number; clientY: number }, content: ReactNode) =>
     setTip({ x: e.clientX, y: e.clientY, content });

@@ -16,6 +16,7 @@ import { DraftIcon, IssueIcon, LockIcon, PullIcon, RefreshIcon, RepoIcon, Search
 import { Badge, ErrorBox, Loading } from "../components/ui";
 import { timeAgo, useAsync } from "../hooks";
 import { TodayPanel } from "../components/TodayPanel";
+import { ActivityPanel } from "../components/ActivityPanel";
 
 export const OTHER_COLOR = "var(--chart-other)";
 export const langColor = (l: { color: string | null }) => l.color ?? OTHER_COLOR;
@@ -232,6 +233,7 @@ export function ReposPage() {
   return (
     <div className="page">
       <TodayPanel login={login} />
+      <ActivityPanel />
 
       <div className="section-head">
         <div>

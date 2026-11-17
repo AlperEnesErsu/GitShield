@@ -8,7 +8,8 @@ from typing import Any
 from gitshield.web.db import Database
 from gitshield.web.github import GitHubClient, GitHubError
 
-MAX_REPOS = 12
+# Safety valve for very large accounts; the response reports how many repos were left out.
+MAX_REPOS = 40
 MAX_CONCURRENT = 6
 
 
@@ -36,6 +37,18 @@ def week_start(ts: datetime) -> str:
     return monday.isoformat()
 
 
+def weeks_between(start: datetime, end: datetime) -> list[str]:
+    """Every week start (Monday) from the week of ``start`` to the week of ``end``, so that
+    weeks without any event still appear on a time axis."""
+    monday = (start - timedelta(days=start.weekday())).date()
+    last = (end - timedelta(days=end.weekday())).date()
+    out = []
+    while monday <= last:
+        out.append(monday.isoformat())
+        monday += timedelta(days=7)
+    return out
+
+
 def step_seconds(review: dict[str, Any], first: str, last: str, use_finish: bool = True) -> float | None:
     steps = {s["key"]: s for s in review.get("progress") or []}
     start = parse_ts((steps.get(first) or {}).get("started_at"))
@@ -45,11 +58,12 @@ def step_seconds(review: dict[str, Any], first: str, last: str, use_finish: bool
     return max(0.0, (end - start).total_seconds())
 
 
-def gitshield_metrics(reviews: list[dict[str, Any]]) -> dict[str, Any]:
+def gitshield_metrics(reviews: list[dict[str, Any]], weeks: list[str] | None = None) -> dict[str, Any]:
+    """``weeks`` lists the week starts of the window; those without reviews are reported as 0."""
     ai = [s for r in reviews if (s := step_seconds(r, "fetch", "verify")) is not None]
     approval = [s / 60 for r in reviews if r["status"] == "submitted"
                 and (s := step_seconds(r, "approve", "approve")) is not None]
-    weekly: dict[str, int] = {}
+    weekly: dict[str, int] = dict.fromkeys(weeks or [], 0)
     for r in reviews:
         ts = parse_ts(r["created_at"])
         if ts:
@@ -72,31 +86,41 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
     active = [r for r in repos if not r["isArchived"]
               and ((parse_ts(r["pushedAt"]) or since) >= since or r["pullRequests"]["totalCount"])]
     active.sort(key=lambda r: r["pushedAt"] or "", reverse=True)
+    skipped = max(0, len(active) - MAX_REPOS)
     active = active[:MAX_REPOS]
+    # Fetch from the start of that day so repeated requests share the client's short cache.
+    fetch_since = since.strftime("%Y-%m-%dT00:00:00Z")
     sem = asyncio.Semaphore(MAX_CONCURRENT)
 
     async def load(repo: dict[str, Any]):
         owner, name = repo["nameWithOwner"].split("/", 1)
         async with sem:
             try:
-                merged = await gh.merged_pulls(owner, name)
+                # A repo that never merged a PR needs no request at all.
+                has_merges = (repo.get("mergedPullRequests") or {}).get("totalCount", 1) > 0
+                merged = (await gh.merged_pulls(owner, name, fetch_since) if has_merges
+                          else {"nodes": [], "truncated": False})
                 pulls = await gh.list_pulls(owner, name) if repo["pullRequests"]["totalCount"] else []
                 return repo["nameWithOwner"], merged, pulls, None
             except GitHubError as e:
-                return repo["nameWithOwner"], [], [], e.message
+                return repo["nameWithOwner"], {"nodes": [], "truncated": False}, [], e.message
 
     results = await asyncio.gather(*(load(r) for r in active))
 
     lead_hours: list[float] = []
     by_repo = []
-    weekly: dict[str, list[float]] = {}
+    all_weeks = weeks_between(since, now)
+    weekly: dict[str, list[float]] = {w: [] for w in all_weeks}
     open_rows = []
     errors = []
+    truncated = []
     for name, merged, pulls, error in results:
         if error:
             errors.append({"repo": name, "error": error})
+        if merged["truncated"]:
+            truncated.append(name)
         repo_hours = []
-        for p in merged:
+        for p in merged["nodes"]:
             created, merged_at = parse_ts(p["createdAt"]), parse_ts(p["mergedAt"])
             if not created or not merged_at or merged_at < since:
                 continue
@@ -127,6 +151,9 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
         "days": days,
         "sla_days": sla_days,
         "repos_checked": len(active),
+        "repos_skipped": skipped,
+        # Repos with more merges in the window than one request series reads; their counts are a floor.
+        "truncated": truncated,
         "errors": errors,
         "merge": {
             "count": len(lead_hours),
@@ -141,5 +168,5 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
             "over_sla": [r for r in open_rows if r["age_days"] > sla_days],
             "buckets": [{"label": label, "count": n} for (label, _), n in zip(buckets, counts, strict=True)],
         },
-        "gitshield": gitshield_metrics(db.reviews_since(since.isoformat(timespec="seconds"))),
+        "gitshield": gitshield_metrics(db.reviews_since(since.isoformat(timespec="seconds")), all_weeks),
     }
