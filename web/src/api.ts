@@ -340,6 +340,8 @@ export interface Metrics {
     count: number;
     median_hours: number | null;
     p75_hours: number | null;
+    /** The same measures for the period of equal length just before. */
+    previous: { count: number; median_hours: number | null };
     by_repo: { repo: string; count: number; median_hours: number | null }[];
     weekly: { week: string; merged: number; median_hours: number | null }[];
   };
@@ -451,6 +453,12 @@ export interface Activity {
   by_weekday: number[];
   repos: { repo: string; private: boolean; commits: number; prs: number; reviews: number; issues: number }[];
   repo_count: number;
+  /** Contributions in the last `days` days (today included) and in the `days` before them. */
+  recent: { days: number; current: number; previous: number };
+  /** Week starts (Mondays) of the 12-week trend, oldest first; the last one may still be running. */
+  trend_weeks: string[];
+  /** The user's own commits per repository for each of `trend_weeks`. */
+  repo_weeks: Record<string, number[]>;
 }
 
 /** Fired after every successful write so progress widgets (streak, badges) can refresh. */

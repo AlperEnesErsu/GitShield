@@ -1,15 +1,17 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Activity, ActivityDay, api } from "../api";
-import { useAsync } from "../hooks";
+import { Activity, ActivityDay } from "../api";
+import type { AsyncState } from "../hooks";
 import {
   BarRow,
   ChartCard,
   ColumnChart,
   CompositionBar,
+  Delta,
   formatNumber,
   Kpi,
   Series,
+  Sparkline,
   StackedBarList,
   TipRow,
   useTooltip,
@@ -30,6 +32,7 @@ const WEEKDAY_TICKS = ["Pzt", "", "Çar", "", "Cum", "", ""];
 const monthFmt = new Intl.DateTimeFormat("tr-TR", { month: "short" });
 const dayFmt = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric", weekday: "long" });
 const shortFmt = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short", year: "numeric" });
+const weekFmt = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short" });
 /** Calendar dates from the API carry no time zone; read them as local days. */
 const localDate = (iso: string) => new Date(`${iso}T00:00:00`);
 
@@ -103,10 +106,13 @@ function ContributionCalendar({ days }: { days: ActivityDay[] }) {
   );
 }
 
-/** The signed-in user's own GitHub activity across every repository, for the last year. */
-export function ActivityPanel() {
+/** Week label for trend tooltips: "8 Eyl haftası". */
+export const weekLabel = (iso: string) => `${weekFmt.format(localDate(iso))} haftası`;
+
+/** The signed-in user's own GitHub activity across every repository, for the last year.
+ *  The overview page owns the request so the repo table can reuse the same answer. */
+export function ActivityPanel({ activity }: { activity: AsyncState<Activity> }) {
   const navigate = useNavigate();
-  const activity = useAsync<Activity>(() => api.activity(), [], "activity");
   const a = activity.data;
 
   const repoRows: BarRow[] = useMemo(() => (a?.repos ?? []).map((r) => {
@@ -139,8 +145,13 @@ export function ActivityPanel() {
       </div>
 
       <div className="kpis">
-        <Kpi icon={<PulseIcon />} label="Toplam katkı" value={formatNumber(a.total)} tone="accent"
-             sub={`${a.repo_count} repoda`} />
+        <Kpi icon={<PulseIcon />} label={`Son ${a.recent.days} gün`} value={formatNumber(a.recent.current)} tone="accent"
+             delta={<Delta current={a.recent.current} previous={a.recent.previous}
+                           period={`önceki ${a.recent.days} güne göre`} />}
+             trend={<Sparkline unit="katkı" current="devam ediyor"
+                               values={a.weeks.slice(-12).map((w) => w.count)}
+                               labels={a.weeks.slice(-12).map((w) => weekLabel(w.week))} />}
+             sub={`yılda ${formatNumber(a.total)} katkı · ${a.repo_count} repoda`} />
         <Kpi icon={<CommitIcon />} label="Güncel seri" value={`${a.streak.current} gün`}
              sub={`en uzun ${a.streak.longest} gün`} />
         <Kpi icon={<MergeIcon />} label="Aktif gün" value={a.active_days}

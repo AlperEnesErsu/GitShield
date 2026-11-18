@@ -89,7 +89,9 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
     skipped = max(0, len(active) - MAX_REPOS)
     active = active[:MAX_REPOS]
     # Fetch from the start of that day so repeated requests share the client's short cache.
-    fetch_since = since.strftime("%Y-%m-%dT00:00:00Z")
+    # The period just before, of the same length, for "vs previous period" deltas.
+    prev_since = since - timedelta(days=days)
+    fetch_since = prev_since.strftime("%Y-%m-%dT00:00:00Z")
     sem = asyncio.Semaphore(MAX_CONCURRENT)
 
     async def load(repo: dict[str, Any]):
@@ -108,6 +110,7 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
     results = await asyncio.gather(*(load(r) for r in active))
 
     lead_hours: list[float] = []
+    prev_hours: list[float] = []
     by_repo = []
     all_weeks = weeks_between(since, now)
     weekly: dict[str, list[float]] = {w: [] for w in all_weeks}
@@ -122,7 +125,10 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
         repo_hours = []
         for p in merged["nodes"]:
             created, merged_at = parse_ts(p["createdAt"]), parse_ts(p["mergedAt"])
-            if not created or not merged_at or merged_at < since:
+            if not created or not merged_at or merged_at < prev_since:
+                continue
+            if merged_at < since:
+                prev_hours.append((merged_at - created).total_seconds() / 3600)
                 continue
             hours = (merged_at - created).total_seconds() / 3600
             repo_hours.append(hours)
@@ -159,6 +165,7 @@ async def build_metrics(db: Database, gh: GitHubClient, days: int = 30, sla_days
             "count": len(lead_hours),
             "median_hours": median(lead_hours),
             "p75_hours": percentile(lead_hours, 0.75),
+            "previous": {"count": len(prev_hours), "median_hours": median(prev_hours)},
             "by_repo": by_repo,
             "weekly": [{"week": w, "merged": len(h), "median_hours": median(h)} for w, h in sorted(weekly.items())],
         },

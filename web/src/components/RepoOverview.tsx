@@ -6,13 +6,17 @@ import {
   ChartCard,
   ColumnChart,
   CompositionBar,
+  Delta,
   formatNumber,
   Kpi,
   Series,
+  Sparkline,
   StackedBarList,
 } from "./charts";
 import { CommitIcon, DraftIcon, ForkIcon, IssueIcon, MergeIcon, PulseIcon, PullIcon, StarIcon } from "./icons";
 import { ErrorBox } from "./ui";
+
+const weekFmt = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "short" });
 
 const AGE_SERIES: Series[] = [
   { key: "ready", label: "Hazır", color: "var(--series-1)" },
@@ -59,6 +63,8 @@ export function RepoOverviewSection({ overview, error, pulls, onRetry }: {
 
   const o = overview;
   const recent = weeks ? weeks.slice(-4).reduce((n, w) => n + w.value, 0) : null;
+  const previous = weeks && weeks.length >= 8 ? weeks.slice(-8, -4).reduce((n, w) => n + w.value, 0) : null;
+  const trend = weeks ? weeks.slice(-12) : null;
   const yearTotal = weeks ? weeks.reduce((n, w) => n + w.value, 0) : null;
 
   return (
@@ -67,6 +73,9 @@ export function RepoOverviewSection({ overview, error, pulls, onRetry }: {
         <Kpi icon={<CommitIcon />} label="Commit" value={o.commits !== null ? formatNumber(o.commits) : "—"}
              sub={o.default_branch ? `${o.default_branch} dalında` : undefined} />
         <Kpi icon={<PulseIcon />} label="Son 4 hafta" value={recent ?? "—"} tone="accent"
+             delta={<Delta current={recent} previous={previous} period="önceki 4 haftaya göre" />}
+             trend={trend && <Sparkline unit="commit" current="devam ediyor" values={trend.map((w) => w.value)}
+                                        labels={trend.map((w) => `${weekFmt.format(w.date)} haftası`)} />}
              sub={yearTotal !== null ? `yılda ${formatNumber(yearTotal)} commit` : "hesaplanıyor"} />
         <Kpi icon={<PullIcon />} label="Açık PR" value={o.pulls.open} sub={`${formatNumber(o.pulls.merged)} merge`} />
         <Kpi icon={<IssueIcon />} label="Açık issue" value={o.issues.open} sub={`${formatNumber(o.issues.closed)} kapandı`} />
