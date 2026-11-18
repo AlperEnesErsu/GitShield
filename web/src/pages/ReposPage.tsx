@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, LanguageShare, Repo } from "../api";
+import { Activity, api, LanguageShare, Repo } from "../api";
 import {
   BarRow,
   ChartCard,
@@ -9,6 +9,7 @@ import {
   Kpi,
   Part,
   Series,
+  Sparkline,
   StackedBarList,
 } from "../components/charts";
 import { Column, DataTable } from "../components/DataTable";
@@ -16,7 +17,7 @@ import { DraftIcon, IssueIcon, LockIcon, PullIcon, RefreshIcon, RepoIcon, Search
 import { Badge, ErrorBox, Loading } from "../components/ui";
 import { timeAgo, useAsync } from "../hooks";
 import { TodayPanel } from "../components/TodayPanel";
-import { ActivityPanel } from "../components/ActivityPanel";
+import { ActivityPanel, weekLabel } from "../components/ActivityPanel";
 
 export const OTHER_COLOR = "var(--chart-other)";
 export const langColor = (l: { color: string | null }) => l.color ?? OTHER_COLOR;
@@ -26,6 +27,12 @@ const WORK_SERIES: Series[] = [
   { key: "issues", label: "Açık issue", color: "var(--series-2)" },
   { key: "drafts", label: "Taslak issue", color: "var(--series-3)" },
 ];
+/** A repository counts as active when something was pushed to it within this many days. */
+const ACTIVE_DAYS = 90;
+const isActive = (r: Repo) =>
+  !!r.pushed_at && (Date.now() - new Date(r.pushed_at).getTime()) / 86400000 <= ACTIVE_DAYS;
+type RepoStatus = "active" | "inactive" | "all";
+
 const ACTIVITY_SERIES: Series[] = [{ key: "repos", label: "Repo", color: "var(--series-1)" }];
 const BUCKETS: [string, number][] = [
   ["Son 7 gün", 7],
@@ -59,6 +66,7 @@ const COLUMNS: Column<Repo>[] = [
           {r.private && <Badge tone="muted"><LockIcon size={11} /> private</Badge>}
           {r.archived && <Badge tone="muted">arşiv</Badge>}
           {r.fork && <Badge tone="muted">fork</Badge>}
+          {!isActive(r) && <Badge tone="muted" title={`${ACTIVE_DAYS} günden uzun süredir push yok`}>pasif</Badge>}
         </div>
         {r.description && <div className="cell-sub clamp">{r.description}</div>}
         <LangBar languages={r.languages} />
@@ -160,17 +168,41 @@ export function ReposPage() {
   const [query, setQuery] = useState("");
   const [onlyWithPrs, setOnlyWithPrs] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [status, setStatus] = useState<RepoStatus>("active");
+  const activity = useAsync<Activity>(() => api.activity(), [], "activity");
 
   const all = repos.data?.repos ?? [];
+  const activeCount = useMemo(() => all.filter(isActive).length, [all]);
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return all.filter(
       (r) =>
         (showArchived || !r.archived) &&
+        (status === "all" || (status === "active") === isActive(r)) &&
         (!onlyWithPrs || r.open_prs > 0) &&
         (!q || r.full_name.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q)),
     );
-  }, [all, query, onlyWithPrs, showArchived]);
+  }, [all, query, onlyWithPrs, showArchived, status]);
+
+  // The user's own commits per week, from the activity answer the panel above already loaded.
+  const columns = useMemo(() => {
+    const a = activity.data;
+    if (!a) return COLUMNS;
+    const labels = a.trend_weeks.map(weekLabel);
+    const total = (r: Repo) => (a.repo_weeks[r.full_name] ?? []).reduce((n, v) => n + v, 0);
+    const trend: Column<Repo> = {
+      key: "trend",
+      header: "Commit'lerin · 12 hafta",
+      secondary: true,
+      sortValue: (r) => total(r) || null,
+      render: (r) => total(r) ? (
+        <Sparkline unit="commit" current="devam ediyor" width={80} height={22}
+                   values={a.repo_weeks[r.full_name]} labels={labels} />
+      ) : <span className="muted small">—</span>,
+    };
+    const at = COLUMNS.findIndex((c) => c.key === "pushed");
+    return [...COLUMNS.slice(0, at), trend, ...COLUMNS.slice(at)];
+  }, [activity.data]);
 
   const summary = useMemo(() => {
     const sum = (f: (r: Repo) => number) => all.reduce((n, r) => n + f(r), 0);
@@ -233,7 +265,7 @@ export function ReposPage() {
   return (
     <div className="page">
       <TodayPanel login={login} />
-      <ActivityPanel />
+      <ActivityPanel activity={activity} />
 
       <div className="section-head">
         <div>
@@ -252,7 +284,7 @@ export function ReposPage() {
         <>
           <div className="kpis">
             <Kpi icon={<RepoIcon />} label="Repo" value={all.length}
-                 sub={`${summary.privateCount} private · ${all.length - summary.privateCount} public`} />
+                 sub={`${activeCount} aktif · ${all.length - activeCount} pasif · ${summary.privateCount} private`} />
             <Kpi icon={<PullIcon />} label="Açık PR" value={summary.prs} tone="accent"
                  sub={`${formatNumber(summary.merged)} PR merge edildi`} />
             <Kpi icon={<IssueIcon />} label="Açık issue" value={summary.issues}
@@ -278,6 +310,14 @@ export function ReposPage() {
           <div className="section-head">
             <h2>Tüm repolar <span className="count">{rows.length}</span></h2>
             <div className="toolbar">
+              <div className="view-toggle" role="radiogroup" aria-label="Repo durumu"
+                   title={`Aktif: son ${ACTIVE_DAYS} günde push almış`}>
+                {([["active", "Aktif", activeCount], ["inactive", "Pasif", all.length - activeCount],
+                   ["all", "Tümü", all.length]] as [RepoStatus, string, number][]).map(([v, text, n]) => (
+                  <button key={v} role="radio" aria-checked={status === v} className={status === v ? "on" : ""}
+                          onClick={() => setStatus(v)}>{text} <span className="muted">{n}</span></button>
+                ))}
+              </div>
               <label className="search">
                 <SearchIcon size={15} />
                 <input type="search" placeholder="Repo ara…" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -294,7 +334,7 @@ export function ReposPage() {
           </div>
           <DataTable
             rows={rows}
-            columns={COLUMNS}
+            columns={columns}
             rowKey={(r) => r.full_name}
             onRowClick={(r) => navigate(`/r/${r.full_name}`)}
             initialSort={{ key: "prs", dir: "desc" }}

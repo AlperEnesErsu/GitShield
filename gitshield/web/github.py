@@ -84,6 +84,11 @@ query($owner: String!, $name: String!) {
 """
 
 _BY_REPO = "(maxRepositories: 25) { repository { nameWithOwner isPrivate } contributions { totalCount } }"
+# Commits also list the days they happened on (most recent first), for per-repo trend lines.
+_COMMITS_BY_REPO = (
+    "(maxRepositories: 25) { repository { nameWithOwner isPrivate } "
+    "contributions(first: 100, orderBy: {field: OCCURRED_AT, direction: DESC}) { totalCount nodes { occurredAt commitCount } } }"
+)
 
 # Without from/to GitHub answers for the last year, ending today.
 ACTIVITY_QUERY = """
@@ -100,14 +105,14 @@ query {
         totalContributions
         weeks { contributionDays { date contributionCount } }
       }
-      commitContributionsByRepository BY_REPO
+      commitContributionsByRepository COMMITS_BY_REPO
       pullRequestContributionsByRepository BY_REPO
       pullRequestReviewContributionsByRepository BY_REPO
       issueContributionsByRepository BY_REPO
     }
   }
 }
-""".replace(" BY_REPO", _BY_REPO)
+""".replace(" COMMITS_BY_REPO", _COMMITS_BY_REPO).replace(" BY_REPO", _BY_REPO)
 
 ACTIVITY_TTL_SEC = 600
 MAX_REPO_PAGES = 10
