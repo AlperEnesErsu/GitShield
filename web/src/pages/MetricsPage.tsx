@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { ChartCard, ColumnChart, formatNumber, Kpi, Series, StackedBarList } from "../components/charts";
+import { ChartCard, ColumnChart, Delta, formatNumber, Kpi, Series, StackedBarList } from "../components/charts";
 import { Column, DataTable } from "../components/DataTable";
 import { DraftIcon, MergeIcon, PulseIcon, PullIcon, ShieldIcon } from "../components/icons";
 import { ErrorBox, Loading } from "../components/ui";
@@ -79,7 +79,9 @@ export function MetricsPage() {
           <>
             <div className="kpis kpis-6">
               <Kpi icon={<MergeIcon />} label="Medyan merge süresi" value={formatHours(m.merge.median_hours)} tone="accent"
-                   sub={`${m.merge.count} merge · p75 ${formatHours(m.merge.p75_hours)}`} />
+                   delta={<Delta current={m.merge.median_hours} previous={m.merge.previous.median_hours} goodWhen="down"
+                                 period={`önceki ${days} güne göre`} format={formatHours} />}
+                   sub={`${m.merge.count} merge (önceki ${days} gün: ${m.merge.previous.count}) · p75 ${formatHours(m.merge.p75_hours)}`} />
               <Kpi icon={<PullIcon />} label="Açık PR medyan yaşı"
                    value={m.open.median_age_days === null ? "—" : `${m.open.median_age_days.toFixed(1)} gün`}
                    sub={`${m.open.count} açık PR (taslaklar hariç)`} />

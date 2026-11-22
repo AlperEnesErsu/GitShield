@@ -39,9 +39,11 @@ class MetricsGitHub:
     async def merged_pulls(self, owner, repo, since=None):
         assert repo == "app", "archived repos are skipped"
         assert since and since.endswith("T00:00:00Z"), "the window start is passed down for paging"
+        self.since = since
         return {"truncated": True, "nodes": [
             {"number": 1, "title": "a", "createdAt": iso(50), "mergedAt": iso(40), "author": {"login": "x"}},
             {"number": 2, "title": "b", "createdAt": iso(30), "mergedAt": iso(10), "author": {"login": "x"}},
+            {"number": 7, "title": "prev", "createdAt": iso(24 * 40 + 6), "mergedAt": iso(24 * 40), "author": {"login": "x"}},
             {"number": 3, "title": "old", "createdAt": iso(24 * 90), "mergedAt": iso(24 * 80), "author": {"login": "x"}},
         ]}
 
@@ -54,7 +56,8 @@ class MetricsGitHub:
 
 def test_build_metrics(tmp_path, open_db):
     db = open_db(tmp_path / "t.db")
-    m = asyncio.run(build_metrics(db, MetricsGitHub(), days=30, sla_days=3))
+    gh = MetricsGitHub()
+    m = asyncio.run(build_metrics(db, gh, days=30, sla_days=3))
 
     assert m["repos_checked"] == 1 and m["repos_skipped"] == 0
     assert m["truncated"] == ["acme/app"]
@@ -64,6 +67,9 @@ def test_build_metrics(tmp_path, open_db):
     assert len(m["gitshield"]["weekly"]) == len(weekly)
     assert m["merge"]["count"] == 2, "merges older than the window are excluded"
     assert m["merge"]["median_hours"] == 15.0  # 10h and 20h
+    assert m["merge"]["previous"] == {"count": 1, "median_hours": 6.0}, "days 30-60 form the previous period"
+    fetched_from = datetime.fromisoformat(gh.since.replace("Z", "+00:00"))
+    assert 59 <= (datetime.now(UTC) - fetched_from).days <= 61, "both periods are fetched in one pass"
     assert m["open"]["count"] == 2, "draft PRs do not count as waiting"
     assert [r["number"] for r in m["open"]["over_sla"]] == [4]
     assert {b["label"]: b["count"] for b in m["open"]["buckets"]}["3–7 gün"] == 1

@@ -294,12 +294,16 @@ export function ColumnChart({ points, height = 180, unit = "commit", color = "va
 /* KPI tile                                                            */
 /* ------------------------------------------------------------------ */
 
-export function Kpi({ icon, label, value, sub, tone }: {
+export function Kpi({ icon, label, value, sub, tone, delta, trend }: {
   icon?: ReactNode;
   label: string;
   value: ReactNode;
   sub?: ReactNode;
   tone?: "accent" | "warn";
+  /** Change against a named earlier period (a <Delta />). */
+  delta?: ReactNode;
+  /** A small trend line beside the value (a <Sparkline />). */
+  trend?: ReactNode;
 }) {
   return (
     <div className={`kpi ${tone ? `kpi-${tone}` : ""}`}>
@@ -307,9 +311,112 @@ export function Kpi({ icon, label, value, sub, tone }: {
         {icon && <span className="kpi-icon">{icon}</span>}
         <span className="kpi-label">{label}</span>
       </div>
-      <div className="kpi-value">{value}</div>
+      <div className="kpi-main">
+        <div className="kpi-value">{value}</div>
+        {trend}
+      </div>
+      {delta && <div className="kpi-delta">{delta}</div>}
       {sub && <div className="kpi-sub">{sub}</div>}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Delta (change vs an earlier period)                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Signed change against an earlier period. The colour says whether the change is good,
+ * so it always comes with an arrow and the signed figure (never colour alone); changes
+ * under 1% read as "unchanged" in muted ink.
+ */
+export function Delta({ current, previous, goodWhen = "up", period, format = formatNumber }: {
+  current: number | null | undefined;
+  previous: number | null | undefined;
+  goodWhen?: "up" | "down";
+  /** The earlier period, as it reads after the figure ("önceki 30 güne göre"). */
+  period: string;
+  /** Formats the earlier value in the tooltip. */
+  format?: (v: number) => string;
+}) {
+  if (current == null || previous == null) return null;
+  const title = `Önceki dönem: ${format(previous)}`;
+  if (previous === 0) {
+    if (current === 0) return <span className="delta delta-flat" title={title}>değişmedi · {period}</span>;
+    return <span className="delta delta-flat" title={title}>önceki dönemde yoktu</span>;
+  }
+  const change = (current - previous) / Math.abs(previous);
+  if (Math.abs(change) < 0.01) {
+    return <span className="delta delta-flat" title={title}>değişmedi · {period}</span>;
+  }
+  const up = change > 0;
+  const good = up === (goodWhen === "up");
+  const pct = Math.abs(change) >= 10 ? `${Math.round(Math.abs(change))}×` : `%${Math.round(Math.abs(change) * 100)}`;
+  return (
+    <span className={`delta ${good ? "delta-good" : "delta-bad"}`} title={title}>
+      <span aria-hidden>{up ? "▲" : "▼"}</span>
+      <span className="sr-only">{up ? "arttı" : "azaldı"}</span> {up ? "+" : "−"}{pct}
+      <span className="delta-period"> · {period}</span>
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Sparkline (stat-tile trend)                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A 12-point trend: the line in the de-emphasis hue, the current (last) point in the accent.
+ * Hovering a point shows its label and value; the accessible name summarises the series.
+ */
+export function Sparkline({ values, labels, unit, width = 96, height = 28, current }: {
+  values: number[];
+  /** One label per point (e.g. the week it covers). */
+  labels: string[];
+  unit: string;
+  width?: number;
+  height?: number;
+  /** Tooltip suffix for the last point, e.g. "devam ediyor" for a week that is not over. */
+  current?: string;
+}) {
+  const tip = useTooltip();
+  const [active, setActive] = useState<number | null>(null);
+  if (values.length < 2) return null;
+
+  const pad = 4; // room for the 8px end dot
+  const max = Math.max(1, ...values);
+  const step = (width - pad * 2) / (values.length - 1);
+  const x = (i: number) => pad + i * step;
+  const y = (v: number) => pad + (height - pad * 2) * (1 - v / max);
+  const points = values.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+  const last = values.length - 1;
+  const total = values.reduce((n, v) => n + v, 0);
+
+  return (
+    <span className="sparkline">
+      <svg width={width} height={height} role="img"
+           aria-label={`Son ${values.length} hafta: toplam ${formatNumber(total)} ${unit}, en yüksek ${formatNumber(max)}, son değer ${formatNumber(values[last])}`}
+           onMouseLeave={() => { setActive(null); tip.hide(); }}>
+        <polyline points={points} className="spark-line" />
+        {active !== null && active !== last && (
+          <circle cx={x(active)} cy={y(values[active])} r={3} className="spark-hover" />
+        )}
+        <circle cx={x(last)} cy={y(values[last])} r={4} className="spark-current" />
+        {values.map((v, i) => (
+          <rect key={i} x={x(i) - step / 2} y={0} width={step} height={height} fill="transparent"
+                onMouseMove={(e) => {
+                  setActive(i);
+                  tip.show(e, (
+                    <>
+                      <div className="tip-title">{labels[i]}{i === last && current ? ` · ${current}` : ""}</div>
+                      <TipRow color={i === last ? "var(--series-1)" : "var(--spark-line)"} label={unit} value={formatNumber(v)} />
+                    </>
+                  ));
+                }} />
+        ))}
+      </svg>
+      {tip.node}
+    </span>
   );
 }
 
