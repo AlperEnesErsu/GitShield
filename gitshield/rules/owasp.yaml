@@ -60,3 +60,227 @@ rules:
     cwe: 'CWE-79'
     file_patterns: ['*.jsx', '*.tsx', '*.js', '*.ts']
     remediation: 'Sanitize raw HTML using DOMPurify before rendering, or prefer standard JSX children.'
+
+  # ---------------------------------------------------------------- Go
+  - id: 'OWASP-A03-GO-SQLI-007'
+    title: 'Go: SQL Injection via fmt.Sprintf or Concatenation'
+    description: 'A database/sql query is built with fmt.Sprintf or string concatenation instead of placeholders.'
+    severity: 'CRITICAL'
+    rule_type: 'OWASP'
+    pattern: '\.(?:Query|QueryRow|Exec|Prepare)(?:Context)?\s*\(.*(?:fmt\.Sprintf\s*\(|"\s*\+\s*[\w.]+)'
+    cwe: 'CWE-89'
+    file_patterns: ['*.go']
+    remediation: 'Use placeholders and pass values as arguments (e.g. `db.Query("SELECT * FROM users WHERE id = $1", id)`).'
+
+  - id: 'OWASP-A03-GO-CMDI-008'
+    title: 'Go: Command Injection via Shell Invocation'
+    description: 'exec.Command runs a shell with -c, so any interpolated value is interpreted as shell syntax.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: 'exec\.Command(?:Context)?\s*\(\s*(?:\w+\s*,\s*)?"(?:/bin/|/usr/bin/)?(?:sh|bash|zsh|cmd(?:\.exe)?|powershell(?:\.exe)?)"\s*,\s*"(?:-c|/c|/C|-Command)"'
+    cwe: 'CWE-78'
+    file_patterns: ['*.go']
+    remediation: 'Call the program directly and pass arguments separately (e.g. `exec.Command("git", "log", ref)`).'
+
+  - id: 'OWASP-A02-GO-HASH-009'
+    title: 'Go: Weak Cryptographic Hash Function (MD5/SHA1)'
+    description: 'crypto/md5 and crypto/sha1 are vulnerable to collision attacks.'
+    severity: 'MEDIUM'
+    rule_type: 'OWASP'
+    pattern: '\b(?:md5|sha1)\.(?:New|Sum)\s*\('
+    cwe: 'CWE-328'
+    file_patterns: ['*.go']
+    remediation: 'Use `sha256.Sum256()` or a password hashing function such as `bcrypt` or `argon2`.'
+
+  - id: 'OWASP-A07-GO-TLS-010'
+    title: 'Go: TLS Certificate Verification Disabled'
+    description: 'InsecureSkipVerify: true accepts any certificate and allows man-in-the-middle attacks.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: 'InsecureSkipVerify\s*:\s*true'
+    cwe: 'CWE-295'
+    file_patterns: ['*.go']
+    remediation: 'Remove `InsecureSkipVerify`; for private CAs add the certificate to `tls.Config.RootCAs` instead.'
+
+  # -------------------------------------------------------------- Java
+  - id: 'OWASP-A03-JAVA-SQLI-011'
+    title: 'Java: SQL Injection via String Concatenation'
+    description: 'A JDBC/JPA query is built by concatenating strings or with String.format instead of bind parameters.'
+    severity: 'CRITICAL'
+    rule_type: 'OWASP'
+    pattern: '\.(?:executeQuery|executeUpdate|executeLargeUpdate|execute|addBatch|prepareStatement|prepareCall|createQuery|createNativeQuery)\s*\(\s*(?:"[^"]*"\s*\+|String\.format\s*\()'
+    cwe: 'CWE-89'
+    file_patterns: ['*.java', '*.kt']
+    remediation: 'Use a PreparedStatement with `?` placeholders and `setString`/`setInt`, or named parameters in JPA.'
+
+  - id: 'OWASP-A03-JAVA-CMDI-012'
+    title: 'Java: OS Command Execution'
+    description: 'Runtime.exec or a ProcessBuilder that starts a shell with -c can run attacker-controlled commands.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: '(?:Runtime\.getRuntime\(\)\s*\.exec\s*\(|ProcessBuilder\s*\(\s*(?:(?:List\.of|Arrays\.asList)\s*\(\s*)?"(?:/bin/)?(?:sh|bash|cmd(?:\.exe)?|powershell(?:\.exe)?)"\s*,\s*"(?:-c|/c|/C|-Command)")'
+    cwe: 'CWE-78'
+    file_patterns: ['*.java', '*.kt']
+    remediation: 'Use `ProcessBuilder` with the program and each argument as separate list items, never a shell string; validate inputs against an allow-list.'
+
+  - id: 'OWASP-A08-JAVA-DESER-013'
+    title: 'Java: Insecure Deserialization'
+    description: 'ObjectInputStream and XMLDecoder can instantiate arbitrary classes from untrusted data (gadget-chain RCE).'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: 'new\s+(?:ObjectInputStream|XMLDecoder)\s*\('
+    cwe: 'CWE-502'
+    file_patterns: ['*.java', '*.kt']
+    remediation: 'Prefer JSON with explicit types; if Java serialization is unavoidable, set an `ObjectInputFilter` allow-list.'
+
+  - id: 'OWASP-A02-JAVA-HASH-014'
+    title: 'Java: Weak Cryptographic Hash Function (MD5/SHA1)'
+    description: 'MessageDigest with MD2, MD5 or SHA-1 is vulnerable to collision attacks.'
+    severity: 'MEDIUM'
+    rule_type: 'OWASP'
+    pattern: '(?i)MessageDigest\.getInstance\s*\(\s*"(?:MD2|MD5|SHA-?1)"'
+    cwe: 'CWE-328'
+    file_patterns: ['*.java', '*.kt']
+    remediation: 'Use `MessageDigest.getInstance("SHA-256")`, or bcrypt/Argon2 for passwords.'
+
+  - id: 'OWASP-A02-JAVA-CIPHER-015'
+    title: 'Java: Weak Cipher or ECB Mode'
+    description: 'DES, 3DES, RC2, RC4, Blowfish or ECB mode (the default for a bare "AES") do not provide adequate confidentiality.'
+    severity: 'MEDIUM'
+    rule_type: 'OWASP'
+    pattern: 'Cipher\.getInstance\s*\(\s*"(?:(?:DES|DESede|RC2|RC4|ARCFOUR|Blowfish)(?:"|/)|AES"|[^"]*/ECB/)'
+    cwe: 'CWE-327'
+    file_patterns: ['*.java', '*.kt']
+    remediation: 'Use an authenticated mode such as `Cipher.getInstance("AES/GCM/NoPadding")` with a random IV.'
+
+  # --------------------------------------------------------------- PHP
+  - id: 'OWASP-A03-PHP-SQLI-016'
+    title: 'PHP: SQL Injection via Interpolated Query'
+    description: 'A SQL query interpolates or concatenates a variable, or uses request input directly.'
+    severity: 'CRITICAL'
+    rule_type: 'OWASP'
+    pattern: '(?:\b(?:mysqli?_query|pg_query|sqlite_query)\s*\(|->(?:query|exec|prepare)\s*\()[^;]*(?:"[^"]*\$[A-Za-z_{]|\.\s*\$[A-Za-z_]|\$_(?:GET|POST|REQUEST|COOKIE))'
+    cwe: 'CWE-89'
+    file_patterns: ['*.php', '*.phtml']
+    remediation: 'Use PDO or mysqli prepared statements with bound parameters (e.g. `$stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?"); $stmt->execute([$id]);`).'
+
+  - id: 'OWASP-A03-PHP-CMDI-017'
+    title: 'PHP: Command Injection'
+    description: 'A shell execution function receives a variable, which may contain attacker-controlled shell syntax.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: '(?<![\w$>:\\])(?:system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec)\s*\([^)]*\$'
+    cwe: 'CWE-78'
+    file_patterns: ['*.php', '*.phtml']
+    remediation: 'Avoid the shell where possible; otherwise wrap every argument with `escapeshellarg()` and validate against an allow-list.'
+
+  - id: 'OWASP-A03-PHP-EVAL-018'
+    title: 'PHP: Unsafe Code Execution with eval()'
+    description: 'eval() and create_function() execute arbitrary PHP code (Remote Code Execution risk).'
+    severity: 'CRITICAL'
+    rule_type: 'OWASP'
+    pattern: '(?<![\w$>:\\])(?:eval|create_function)\s*\('
+    cwe: 'CWE-95'
+    file_patterns: ['*.php', '*.phtml']
+    remediation: 'Remove eval(); use closures, a lookup table of allowed operations, or `json_decode()` for data.'
+
+  - id: 'OWASP-A08-PHP-DESER-019'
+    title: 'PHP: Insecure Deserialization (unserialize)'
+    description: 'unserialize() without an allowed_classes list can trigger object injection (POP-chain RCE).'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: '(?<![\w$>:\\])unserialize\s*\((?![^;]*allowed_classes)'
+    cwe: 'CWE-502'
+    file_patterns: ['*.php', '*.phtml']
+    remediation: 'Use `json_decode()`, or pass `["allowed_classes" => false]` (or an explicit class list) to `unserialize()`.'
+
+  - id: 'OWASP-A03-PHP-LFI-020'
+    title: 'PHP: File Inclusion from Request Input'
+    description: 'include/require with a path taken from request input allows local or remote file inclusion.'
+    severity: 'CRITICAL'
+    rule_type: 'OWASP'
+    pattern: '\b(?:include|require)(?:_once)?\s*\(?[^;]*\$_(?:GET|POST|REQUEST|COOKIE)'
+    cwe: 'CWE-98'
+    file_patterns: ['*.php', '*.phtml']
+    remediation: 'Map request values to a fixed allow-list of files instead of building include paths from input.'
+
+  - id: 'OWASP-A03-PHP-XSS-021'
+    title: 'PHP: Reflected XSS via Unescaped Request Input'
+    description: 'Request input is echoed to the page without HTML escaping.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: '(?:\becho|\bprint|<\?=)\s*\(?\s*\$_(?:GET|POST|REQUEST|COOKIE)'
+    cwe: 'CWE-79'
+    file_patterns: ['*.php', '*.phtml']
+    remediation: 'Escape output with `htmlspecialchars($value, ENT_QUOTES, "UTF-8")` or a templating engine with auto-escaping.'
+
+  - id: 'OWASP-A02-PHP-HASH-022'
+    title: 'PHP: Weak Cryptographic Hash Function (MD5/SHA1)'
+    description: 'md5() and sha1() are vulnerable to collision attacks and unsuitable for passwords.'
+    severity: 'MEDIUM'
+    rule_type: 'OWASP'
+    pattern: '(?<![\w$>:\\])(?:md5|sha1)\s*\('
+    cwe: 'CWE-328'
+    file_patterns: ['*.php', '*.phtml']
+    remediation: 'Use `password_hash()` for passwords and `hash("sha256", ...)` elsewhere.'
+
+  # -------------------------------------------------------------- Ruby
+  - id: 'OWASP-A03-RUBY-SQLI-023'
+    title: 'Ruby: SQL Injection via String Interpolation'
+    description: 'An ActiveRecord or raw SQL query interpolates a value with #{...} instead of using bind parameters.'
+    severity: 'CRITICAL'
+    rule_type: 'OWASP'
+    pattern: '\.(?:where|not|find_by_sql|count_by_sql|order|reorder|group|having|joins|from|pluck|execute|exec_query|select_all|select_one|select_value|select_values)\s*\(?\s*"[^"]*#\{'
+    cwe: 'CWE-89'
+    file_patterns: ['*.rb']
+    remediation: 'Use placeholders or hash conditions (e.g. `User.where("id = ?", id)` or `User.where(id: id)`).'
+
+  - id: 'OWASP-A03-RUBY-CMDI-024'
+    title: 'Ruby: Command Injection via Interpolated Shell Command'
+    description: 'A shell command string interpolates a value with #{...}, so it is interpreted by the shell.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: '(?:(?<![\w.])(?:system|exec|spawn)\s*\(?\s*"[^"]*#\{|`[^`]*#\{|%x[({\[][^)}\]]*#\{|(?:IO\.popen|Open3\.(?:capture2e?|capture3|popen2e?|popen3|pipeline\w*))\s*\(\s*"[^"]*#\{)'
+    cwe: 'CWE-78'
+    file_patterns: ['*.rb']
+    remediation: 'Pass the program and arguments separately (e.g. `system("git", "log", ref)`), which bypasses the shell.'
+
+  - id: 'OWASP-A03-RUBY-EVAL-025'
+    title: 'Ruby: Unsafe Code Execution with eval'
+    description: 'eval, instance_eval, class_eval or module_eval with a string argument executes arbitrary Ruby code.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: '(?:(?<![\w.:])eval|\.(?:instance_eval|class_eval|module_eval))(?:\s*\(\s*|\s+)(?!do\b)[\w"''@$:<]'
+    cwe: 'CWE-95'
+    file_patterns: ['*.rb']
+    remediation: 'Use the block form (`class_eval do ... end`), `public_send` with an allow-list of method names, or a data parser.'
+
+  - id: 'OWASP-A08-RUBY-DESER-026'
+    title: 'Ruby: Insecure Deserialization (Marshal / unsafe YAML)'
+    description: 'Marshal.load and YAML.unsafe_load can instantiate arbitrary objects from untrusted data.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: '\b(?:Marshal\.(?:load|restore)|(?:YAML|Psych)\.unsafe_load(?:_file)?)\b'
+    cwe: 'CWE-502'
+    file_patterns: ['*.rb']
+    remediation: 'Use `JSON.parse` or `YAML.safe_load` with an explicit `permitted_classes` list.'
+
+  - id: 'OWASP-A02-RUBY-HASH-027'
+    title: 'Ruby: Weak Cryptographic Hash Function (MD5/SHA1)'
+    description: 'Digest::MD5 and Digest::SHA1 are vulnerable to collision attacks.'
+    severity: 'MEDIUM'
+    rule_type: 'OWASP'
+    pattern: '\b(?:OpenSSL::)?Digest::(?:MD5|SHA1)\b'
+    cwe: 'CWE-328'
+    file_patterns: ['*.rb']
+    remediation: 'Use `Digest::SHA256`, or `BCrypt::Password.create` for passwords.'
+
+  - id: 'OWASP-A03-RUBY-XSS-028'
+    title: 'Ruby: XSS via html_safe or Raw ERB Output'
+    description: 'html_safe and <%== mark a string as safe HTML, bypassing Rails auto-escaping.'
+    severity: 'HIGH'
+    rule_type: 'OWASP'
+    pattern: '(?:\.html_safe\b|<%==)'
+    cwe: 'CWE-79'
+    file_patterns: ['*.rb', '*.erb', '*.haml', '*.slim']
+    remediation: 'Let Rails escape the value, or use `sanitize(value)` / `safe_join` for trusted markup.'

@@ -12,7 +12,7 @@ Geleneksel SAST çözümleri genellikle tüm kod tabanını tarar ve geliştiric
 
 1. **Diff-First (Yalnızca Eklenen Satırlar):** Tarayıcı, `git diff` çıktısındaki eklenen (`+`) satırları tarar. Bağlam satırları (`-U3`) yalnızca ayrıştırma için okunur; bulgu üretilmez. Düzeltme aşamasında ise bulgunun dosyadaki ±8 satırlık bağlamı kullanılır.
 2. **Çift Kademeli Tespit (Deterministik + Heuristik):**
-   - **Deterministik:** 20 sır kuralı ve 6 OWASP kuralı (satır bazlı regex, dosya uzantısı kapsamıyla).
+   - **Deterministik:** 20 sır kuralı ve 28 OWASP kuralı (Python, JS/TS, Go, Java/Kotlin, PHP, Ruby; satır bazlı regex, dosya uzantısı kapsamıyla).
    - **Heuristik:** Tırnak içindeki rastgele görünümlü değerler için Shannon entropisi (`H(X) = -Σ P(x) log2 P(x)`), uzunluğa bağlı eşikle. Entropi sezgisi yanlış pozitif üretebilir; `--no-entropy` ile kapatılabilir.
 3. **AST Analizi Yoktur:** Kurallar satır bazlıdır. Veri akışı, fonksiyon sınırı veya dil ayrıştırması yapılmaz. Bu, kapsamı bilinçli olarak sınırlar; bkz. Bölüm 9.
 4. **Fail-Closed Git Hataları:** Git hatası (geçersiz ref, depo olmayan dizin, git yok) boş bir raporla geçilmez; tarama çıkış kodu 2 ile durur.
@@ -44,7 +44,7 @@ Geleneksel SAST çözümleri genellikle tüm kod tabanını tarar ve geliştiric
 |  +-----------------------------+   +-----------------------------+   |
 |  | Kural Motoru (rules/engine) |   | Entropi (core/entropy.py)   |   |
 |  | - secrets.yaml (20)         |   | - tırnak içi token          |   |
-|  | - owasp.yaml (6)            |   | - uzunluğa bağlı eşik       |   |
+|  | - owasp.yaml (28)           |   | - uzunluğa bağlı eşik       |   |
 |  | - dosya kapsamı, placeholder|   | - benign/UUID/yol filtresi  |   |
 |  +-----------------------------+   +-----------------------------+   |
 |  Bastırma (gitshield: ignore, .gitshieldignore), lockfile istisnası  |
