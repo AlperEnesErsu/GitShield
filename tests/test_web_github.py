@@ -58,3 +58,118 @@ def test_repeated_reads_are_cached_and_writes_invalidate():
     gets = [c for c in calls if c[0] == "GET"]
     assert gets == [("GET", "/repos/acme/app/pulls"), ("GET", "/repos/acme/other/pulls"),
                     ("GET", "/repos/acme/app/pulls")]
+
+
+def _repo_client(calls, fail_after=None):
+    def handler(request):
+        calls.append(request.url.path)
+        if fail_after is not None and len(calls) > fail_after:
+            return httpx.Response(500, json={"message": "boom"})
+        node = {"nameWithOwner": f"acme/app{len(calls)}"}
+        return httpx.Response(200, json={"data": {"viewer": {"login": "me", "repositories": {
+            "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node]}}}})
+
+    gh = GitHubClient(token="t", base_url="https://api.github.test")
+    gh._client = httpx.AsyncClient(base_url="https://api.github.test", transport=httpx.MockTransport(handler))
+    return gh
+
+
+def test_repo_list_is_fetched_once_for_concurrent_callers():
+    calls = []
+    gh = _repo_client(calls)
+
+    async def scenario():
+        return await asyncio.gather(gh.list_repos(), gh.list_repos(), gh.list_repos())
+
+    results = asyncio.run(scenario())
+    assert len(calls) == 1
+    assert all(r["repos"][0]["nameWithOwner"] == "acme/app1" for r in results)
+    assert not gh.repos_stale()
+
+
+def test_stale_repo_list_is_served_at_once_and_refreshed_in_background():
+    calls = []
+    gh = _repo_client(calls)
+    saved = []
+    gh.on_repos = saved.append
+    gh.seed_repos({"login": "me", "repos": [{"nameWithOwner": "acme/saved"}]})
+
+    async def scenario():
+        first = await gh.list_repos()
+        assert first["repos"][0]["nameWithOwner"] == "acme/saved" and gh.repos_stale()
+        await gh._repo_task  # the background refresh
+        second = await gh.list_repos()
+        forced = await gh.list_repos(refresh=True)
+        return second, forced
+
+    second, forced = asyncio.run(scenario())
+    assert second["repos"][0]["nameWithOwner"] == "acme/app1"
+    assert forced["repos"][0]["nameWithOwner"] == "acme/app2"
+    assert len(calls) == 2 and len(saved) == 2 and not gh.repos_stale()
+
+
+def test_failed_background_refresh_keeps_the_stale_repo_list():
+    calls = []
+    gh = _repo_client(calls, fail_after=0)
+    gh.seed_repos({"login": "me", "repos": []})
+
+    async def scenario():
+        await gh.list_repos()
+        await asyncio.wait([gh._repo_task])
+        return await gh.list_repos()
+
+    assert asyncio.run(scenario()) == {"login": "me", "repos": []}
+    assert gh.repos_stale()
+
+
+def test_viewer_is_cached():
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json={"login": "me"})
+
+    gh = GitHubClient(token="t", base_url="https://api.github.test")
+    gh._client = httpx.AsyncClient(base_url="https://api.github.test", transport=httpx.MockTransport(handler))
+
+    async def scenario():
+        await gh.viewer()
+        await gh.viewer()
+
+    asyncio.run(scenario())
+    assert calls == ["/user"]
+
+
+def _merged_client(pages, calls):
+    def handler(request):
+        import json
+        cursor = json.loads(request.content)["variables"]["cursor"]
+        calls.append(cursor)
+        index = int(cursor or 0)
+        nodes = [{"number": i, "updatedAt": ts} for i, ts in enumerate(pages[index])]
+        return httpx.Response(200, json={"data": {"repository": {"pullRequests": {
+            "pageInfo": {"hasNextPage": index + 1 < len(pages), "endCursor": str(index + 1)},
+            "nodes": nodes}}}})
+
+    gh = GitHubClient(token="t", base_url="https://api.github.test")
+    gh._client = httpx.AsyncClient(base_url="https://api.github.test", transport=httpx.MockTransport(handler))
+    return gh
+
+
+def test_merged_pulls_pages_back_to_the_window_start():
+    calls = []
+    pages = [["2026-03-10T00:00:00Z", "2026-03-05T00:00:00Z"],
+             ["2026-03-03T00:00:00Z", "2026-02-20T00:00:00Z"],   # last one is before the window
+             ["2026-01-01T00:00:00Z"]]
+    gh = _merged_client(pages, calls)
+    result = asyncio.run(gh.merged_pulls("acme", "app", "2026-03-01T00:00:00Z"))
+    assert calls == [None, "1"], "the third page is never requested"
+    assert len(result["nodes"]) == 4 and result["truncated"] is False
+
+
+def test_merged_pulls_reports_truncation_at_the_page_cap(monkeypatch):
+    monkeypatch.setattr("gitshield.web.github.MAX_MERGED_PAGES", 2)
+    calls = []
+    gh = _merged_client([["2026-03-10T00:00:00Z"]] * 5, calls)
+    result = asyncio.run(gh.merged_pulls("acme", "app", "2026-03-01T00:00:00Z"))
+    assert len(calls) == 2 and result["truncated"] is True

@@ -331,11 +331,17 @@ export interface Metrics {
   days: number;
   sla_days: number;
   repos_checked: number;
+  /** Active repos left out because the account has more than the server reads at once. */
+  repos_skipped: number;
+  /** Repos with more merges in the window than the server pages through; their counts are a floor. */
+  truncated: string[];
   errors: { repo: string; error: string }[];
   merge: {
     count: number;
     median_hours: number | null;
     p75_hours: number | null;
+    /** The same measures for the period of equal length just before. */
+    previous: { count: number; median_hours: number | null };
     by_repo: { repo: string; count: number; median_hours: number | null }[];
     weekly: { week: string; merged: number; median_hours: number | null }[];
   };
@@ -426,6 +432,35 @@ export interface Gamification {
 
 export type GamificationResponse = GamificationOff | Gamification;
 
+export interface ActivityDay {
+  date: string;
+  count: number;
+}
+
+/** The signed-in user's own contributions over the last year, across all repositories. */
+export interface Activity {
+  login: string;
+  from: string | null;
+  to: string | null;
+  total: number;
+  counts: { commits: number; prs: number; reviews: number; issues: number; restricted: number };
+  active_days: number;
+  best_day: ActivityDay | null;
+  streak: { current: number; longest: number };
+  days: ActivityDay[];
+  weeks: { week: string; count: number }[];
+  /** Monday first. */
+  by_weekday: number[];
+  repos: { repo: string; private: boolean; commits: number; prs: number; reviews: number; issues: number }[];
+  repo_count: number;
+  /** Contributions in the last `days` days (today included) and in the `days` before them. */
+  recent: { days: number; current: number; previous: number };
+  /** Week starts (Mondays) of the 12-week trend, oldest first; the last one may still be running. */
+  trend_weeks: string[];
+  /** The user's own commits per repository for each of `trend_weeks`. */
+  repo_weeks: Record<string, number[]>;
+}
+
 /** Fired after every successful write so progress widgets (streak, badges) can refresh. */
 export const ACTIVITY_EVENT = "gitshield:activity";
 
@@ -507,9 +542,10 @@ export const api = {
   repoSettings: (repo: string) => request<RepoSettings>("GET", `${repoPath(repo)}/settings`),
   setRepoSettings: (repo: string, patch: Partial<Omit<RepoSettings, "repo">>) =>
     request<RepoSettings>("PUT", `${repoPath(repo)}/settings`, patch),
+  activity: () => request<Activity>("GET", "/activity"),
   status: () => request<Status>("GET", "/status"),
   repos: (refresh = false) =>
-    request<{ login: string; repos: Repo[] }>("GET", `/repos${refresh ? "?refresh=true" : ""}`),
+    request<{ login: string; repos: Repo[]; stale?: boolean }>("GET", `/repos${refresh ? "?refresh=true" : ""}`),
   overview: (repo: string) => request<RepoOverview>("GET", `${repoPath(repo)}/overview`),
   pulls: (repo: string) => request<PullSummary[]>("GET", `${repoPath(repo)}/pulls`),
   issues: (repo: string) => request<Issue[]>("GET", `${repoPath(repo)}/issues`),

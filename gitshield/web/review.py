@@ -38,6 +38,7 @@ from gitshield.web.review_progress import (  # noqa: E402, F401
     Progress,
     initial_progress,
 )
+from gitshield.web.review_repo_config import apply_repo_scan_config, load_repo_scan_config
 
 # Re-exports: these names used to live in this module.
 from gitshield.web.review_schemas import (  # noqa: E402, F401
@@ -350,10 +351,20 @@ async def run_review(db: Database, gh: GitHubClient, provider: LLMProvider | Non
 
         progress.start("scan", "Kural motoru ve entropi analizi çalışıyor")
         report = Scanner().scan_diff(Path("."), raw_diff=fetched.raw_diff)
-        progress.done("scan", f"{report.scanned_lines_count} eklenen satır · {len(report.findings)} bulgu")
-
-        # Never send detected secrets to the LLM or store them in plain text.
+        # Never send detected secrets to the LLM or store them in plain text. Collected before
+        # the repo's ignore file and baseline drop findings: a secret stays redacted either way.
         secrets = _detected_secrets(report)
+        repo_config = await load_repo_scan_config(gh, owner, repo, fetched.pr)
+        report.findings, ignored, baselined = apply_repo_scan_config(report.findings, repo_config)
+        scan_detail = f"{report.scanned_lines_count} eklenen satır · {len(report.findings)} bulgu"
+        if ignored:
+            scan_detail += f" · {ignored} .gitshieldignore ile atlandı"
+        if baselined:
+            scan_detail += f" · {baselined} baseline'da kabul edilmiş"
+        if repo_config.problems:
+            scan_detail += " · " + "; ".join(repo_config.problems)
+        progress.done("scan", scan_detail)
+
         annotated = _redact(fetched.annotated, secrets)
         candidates = _scanner_candidates(report, secrets)
 
@@ -397,6 +408,9 @@ async def run_review(db: Database, gh: GitHubClient, provider: LLMProvider | Non
                 "rejected": sum(1 for c in candidates if c["verification"] == "rejected"),
                 "uncertain": sum(1 for c in candidates if c["verification"] == "uncertain"),
                 "drafts_created": drafts_created,
+                # Only when something was dropped, so reviews of repos without the files are unchanged
+                **({"ignored_findings": ignored} if ignored else {}),
+                **({"baselined_findings": baselined} if baselined else {}),
             },
         )
     except Exception as e:  # surfaced to the UI; the review row records the failure

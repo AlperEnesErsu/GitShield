@@ -8,9 +8,24 @@ export interface AsyncState<T> {
   setData: (updater: (prev: T | undefined) => T | undefined) => void;
 }
 
-/** Run an async loader on mount and whenever `deps` change; ignore stale responses. */
-export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]): AsyncState<T> {
-  const [data, setDataState] = useState<T | undefined>(undefined);
+/** Last successful answer per `cacheKey`, kept for the lifetime of the tab. */
+const responseCache = new Map<string, unknown>();
+
+/**
+ * Run an async loader on mount and whenever `deps` change; ignore stale responses.
+ *
+ * With a `cacheKey` the last answer for that key is shown immediately (also after navigating
+ * away and back) while the loader runs again in the background, so `loading` can be true
+ * while `data` is already set; `error` reports a failed refresh without clearing `data`.
+ */
+export function useAsync<T>(loader: () => Promise<T>, deps: unknown[], cacheKey?: string): AsyncState<T> {
+  const cached = () => (cacheKey ? (responseCache.get(cacheKey) as T | undefined) : undefined);
+  // The value remembers which key it belongs to, so a key change (e.g. another repo) never
+  // shows the previous entity's data, not even for one render.
+  const [state, setState] = useState<{ key: string | undefined; value: T | undefined }>(
+    () => ({ key: cacheKey, value: cached() }),
+  );
+  const data = state.key === cacheKey ? state.value : cached();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
@@ -23,19 +38,30 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]): AsyncSta
     setError(null);
     loaderRef
       .current()
-      .then((result) => !cancelled && setDataState(result))
+      .then((result) => {
+        if (cacheKey) responseCache.set(cacheKey, result);
+        if (!cancelled) setState({ key: cacheKey, value: result });
+      })
       .catch((e: Error) => !cancelled && setError(e.message))
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
+  }, [...deps, cacheKey, nonce]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   const setData = useCallback(
-    (updater: (prev: T | undefined) => T | undefined) => setDataState(updater),
-    [],
+    (updater: (prev: T | undefined) => T | undefined) =>
+      setState((prev) => {
+        const base = prev.key === cacheKey
+          ? prev.value
+          : cacheKey ? (responseCache.get(cacheKey) as T | undefined) : undefined;
+        const next = updater(base);
+        if (cacheKey && next !== undefined) responseCache.set(cacheKey, next);
+        return { key: cacheKey, value: next };
+      }),
+    [cacheKey],
   );
   return { data, error, loading, reload, setData };
 }

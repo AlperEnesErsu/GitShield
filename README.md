@@ -17,7 +17,7 @@ Geleneksel SAST (Statik Kod Analizi) araçları geliştiricilerin önüne yüzle
 **GitShield'ın Farkı:**
 1. **Sıfır Gürültü:** Yalnızca değişen satırları (git diff'inin `+` satırları) tarar. Eski kod tabanındaki borçlar süreci tıkamaz.
 2. **Regex + Shannon Entropisi:** Bilinen sır biçimleri YAML kurallarıyla, bilinmeyen rastgele görünümlü değerler ise entropi sezgisiyle aranır. Entropi eşiği token uzunluğuna göre ayarlanır; SHA, UUID, dosya yolu, sürüm ve tanımlayıcı gibi yaygın değerler dışarıda tutulur. Bu bir sezgisel yöntemdir: yanlış pozitif de yanlış negatif de üretebilir, bir doğruluk oranı iddia edilmez.
-3. **OWASP Odaklı Kalıplar:** SQL Injection (string birleştirme), komut enjeksiyonu (`shell=True`), `eval`/`exec`, `pickle`, MD5/SHA1, `dangerouslySetInnerHTML` gibi kalıpları satır bazlı regex ile arar. AST veya veri akışı analizi yoktur.
+3. **OWASP Odaklı Kalıplar:** Python, JavaScript/TypeScript, Go, Java/Kotlin, PHP ve Ruby kodunda SQL Injection (string birleştirme/interpolasyon), komut enjeksiyonu, `eval`, güvensiz deserialization, MD5/SHA1, zayıf şifreleme, devre dışı TLS doğrulaması ve XSS gibi kalıpları satır bazlı regex ile arar. AST veya veri akışı analizi yoktur.
 4. **💡 LLM Düzeltme Önerisi:** `--fix` bayrağıyla her bulgu için açıklama ve önerilen değiştirme kodu üretilir. Öneri otomatik uygulanmaz ve test edilmez; geliştirici inceleyip uygular. Web panelindeki düzeltme PR'ı ise önizlemeli ve düzenlenebilir olarak açılır.
 5. **Üç Kullanım Biçimi:** Yerel terminal (`gitshield scan`), GitHub Action (SARIF'i Code Scanning'e yükler) ve PR inceleme paneli (`gitshield web`).
 
@@ -31,7 +31,7 @@ flowchart TD
     B --> C["Scanner"]
 
     subgraph Detection ["1. Katman: Tespit"]
-        C --> D["Regex Kuralları (YAML, 26 yerleşik kural)"]
+        C --> D["Regex Kuralları (YAML, 48 yerleşik kural)"]
         C --> E["Shannon Entropi Sezgisi (tırnak içi değerler)"]
     end
 
@@ -168,7 +168,7 @@ tests/test_*.py
 secrets.example
 ```
 
-CLI dosyayı otomatik okur; `--no-ignore-file` ile kapatılır. Bu repo da kendi test dosyaları için bir `.gitshieldignore` kullanır.
+CLI dosyayı otomatik okur; `--no-ignore-file` ile kapatılır. Web panelindeki PR incelemeleri de dosyayı PR'ın base commit'inden okur. Bu repo da kendi test dosyaları için bir `.gitshieldignore` kullanır.
 
 #### Baseline (`.gitshield-baseline.json`)
 
@@ -184,6 +184,7 @@ git add .gitshield-baseline.json         # dosyayı inceleyip commit'leyin
 - Dosyada eşleşen metin veya sır **yoktur**; yalnızca parmak izi, kural kimliği, dosya yolu ve önem tutulur.
 - `--update-baseline` mevcut kayıtları korur ve yenilerini ekler (diff taramaları deponun yalnızca bir kısmını gördüğü için dosya baştan yazılmaz). Düzeltilmiş bulguların kayıtlarını temizlemek için dosyayı silip yeniden oluşturun.
 - CLI dosyayı otomatik okur; `--baseline DOSYA` ile başka bir yol, `--no-baseline` ile tüm bulgular. Bozuk veya bilinmeyen sürümlü bir baseline dosyası çıkış kodu 2 verir. GitHub Action da depoda commit'lenmiş baseline dosyasını kullanır.
+- Web panelindeki PR incelemeleri baseline'ı PR'ın **base** commit'inden okur: PR'ın kendi eklediği kayıtlar o PR'ı susturmaz, merge'den sonra geçerli olur. Kabul edilmiş sırlar yine de LLM'e gitmeden redakte edilir.
 
 #### Etkileşimli düzeltme (`--interactive`)
 
@@ -204,7 +205,7 @@ git add .gitshield-baseline.json         # dosyayı inceleyip commit'leyin
 
 #### Yerleşik kurallar
 
-Toplam **26 yerleşik regex kuralı** (20 sır, 6 OWASP) ve bir entropi sezgisi (`ENTROPY-HIGH-001`, HIGH) vardır. Kurallar `gitshield/rules/` altındaki YAML dosyalarında tanımlıdır.
+Toplam **48 yerleşik regex kuralı** (20 sır, 28 OWASP) ve bir entropi sezgisi (`ENTROPY-HIGH-001`, HIGH) vardır. Kurallar `gitshield/rules/` altındaki YAML dosyalarında tanımlıdır.
 
 **Sır kuralları (`secrets.yaml`, 20 kural):**
 
@@ -231,7 +232,7 @@ Toplam **26 yerleşik regex kuralı** (20 sır, 6 OWASP) ve bir entropi sezgisi 
 | `SEC-JWT-005` | Sabit kodlanmış JWT | HIGH |
 | `SEC-GEN-006` | Sabit kodlanmış secret / parola ataması | HIGH |
 
-**OWASP kuralları (`owasp.yaml`, 6 kural):**
+**OWASP kuralları (`owasp.yaml`, 28 kural):**
 
 | ID | Başlık | Önem | Dosya kapsamı |
 |---|---|---|---|
@@ -241,12 +242,34 @@ Toplam **26 yerleşik regex kuralı** (20 sır, 6 OWASP) ve bir entropi sezgisi 
 | `OWASP-A08-PICKLE-004` | Güvensiz deserialization (`pickle`) | HIGH | py |
 | `OWASP-A02-HASH-005` | Zayıf hash (MD5 / SHA1) | MEDIUM | py |
 | `OWASP-A03-XSS-006` | `dangerouslySetInnerHTML` | HIGH | js, jsx, ts, tsx |
+| `OWASP-A03-GO-SQLI-007` | SQL Injection (`fmt.Sprintf` / birleştirme ile sorgu) | CRITICAL | go |
+| `OWASP-A03-GO-CMDI-008` | Komut enjeksiyonu (`exec.Command("sh", "-c", ...)`) | HIGH | go |
+| `OWASP-A02-GO-HASH-009` | Zayıf hash (`md5` / `sha1` paketleri) | MEDIUM | go |
+| `OWASP-A07-GO-TLS-010` | TLS sertifika doğrulaması kapalı (`InsecureSkipVerify: true`) | HIGH | go |
+| `OWASP-A03-JAVA-SQLI-011` | SQL Injection (JDBC/JPA sorgusunda birleştirme, `String.format`) | CRITICAL | java, kt |
+| `OWASP-A03-JAVA-CMDI-012` | Komut çalıştırma (`Runtime.exec`, kabuklu `ProcessBuilder`) | HIGH | java, kt |
+| `OWASP-A08-JAVA-DESER-013` | Güvensiz deserialization (`ObjectInputStream`, `XMLDecoder`) | HIGH | java, kt |
+| `OWASP-A02-JAVA-HASH-014` | Zayıf hash (`MessageDigest` MD2/MD5/SHA-1) | MEDIUM | java, kt |
+| `OWASP-A02-JAVA-CIPHER-015` | Zayıf şifre veya ECB modu (DES, RC4, yalın `"AES"`) | MEDIUM | java, kt |
+| `OWASP-A03-PHP-SQLI-016` | SQL Injection (sorguda değişken interpolasyonu, `$_GET` vb.) | CRITICAL | php, phtml |
+| `OWASP-A03-PHP-CMDI-017` | Komut enjeksiyonu (`system`, `shell_exec`, `exec` ... değişkenle) | HIGH | php, phtml |
+| `OWASP-A03-PHP-EVAL-018` | `eval()` / `create_function()` | CRITICAL | php, phtml |
+| `OWASP-A08-PHP-DESER-019` | `unserialize()` (`allowed_classes` olmadan) | HIGH | php, phtml |
+| `OWASP-A03-PHP-LFI-020` | İstek girdisiyle `include` / `require` | CRITICAL | php, phtml |
+| `OWASP-A03-PHP-XSS-021` | İstek girdisinin kaçışsız `echo` edilmesi | HIGH | php, phtml |
+| `OWASP-A02-PHP-HASH-022` | Zayıf hash (`md5()` / `sha1()`) | MEDIUM | php, phtml |
+| `OWASP-A03-RUBY-SQLI-023` | SQL Injection (ActiveRecord sorgusunda `#{}`) | CRITICAL | rb |
+| `OWASP-A03-RUBY-CMDI-024` | Komut enjeksiyonu (`system`, backtick, `%x`, `Open3` içinde `#{}`) | HIGH | rb |
+| `OWASP-A03-RUBY-EVAL-025` | String ile `eval` / `class_eval` / `instance_eval` | HIGH | rb |
+| `OWASP-A08-RUBY-DESER-026` | Güvensiz deserialization (`Marshal.load`, `YAML.unsafe_load`) | HIGH | rb |
+| `OWASP-A02-RUBY-HASH-027` | Zayıf hash (`Digest::MD5` / `Digest::SHA1`) | MEDIUM | rb |
+| `OWASP-A03-RUBY-XSS-028` | `html_safe` / `<%==` ile kaçışsız çıktı | HIGH | rb, erb, haml, slim |
 
 **Entropi sezgisi (`ENTROPY-HIGH-001`, HIGH):** Yalnızca tırnak içindeki değerler değerlendirilir ve şu filtrelerden geçmesi gerekir:
 - 16–128 karakter uzunluğunda ve sır karakter kümesinden (base64 / base64url / ayırıcılar) oluşmalı; en az iki karakter sınıfı (küçük harf, büyük harf, rakam) içermeli.
 - Saf hex değerler (SHA, SHA-256 vb.) yalnızca `key`, `token`, `secret`, `password` gibi bir ad atamasının hemen önünde ise incelenir.
 - Eşik token uzunluğuna göre belirlenir: `min(taban, 0.8 · log2(uzunluk))`; hex için taban 3.2, diğerleri için 4.3.
-- Şu biçimler her zaman dışarıda tutulur: `http(s)://` ve MIME türü değerleri, UUID, dosya yolları, noktalı tanımlayıcılar (`com.example.service`), sürüm numaraları, tekrarlayan veya ardışık karakterli değerler.
+- Şu biçimler her zaman dışarıda tutulur: `http(s)://` ve MIME türü değerleri, UUID, dosya yolları, Java şifre dönüşümleri (`AES/GCM/NoPadding`), kural kimlikleri (`OWASP-A03-GO-SQLI-007`), noktalı tanımlayıcılar (`com.example.service`), sürüm numaraları, tekrarlayan veya ardışık karakterli değerler.
 - Lockfile'lar (`package-lock.json`, `uv.lock`, `go.sum` vb.) entropi sezgisinin dışındadır; bütünlük hash'leri rastgele görünür.
 
 #### Özel kurallar (`--rules-dir`)
@@ -436,7 +459,7 @@ GitShield/
 │   ├── rules/
 │   │   ├── engine.py         # YAML kural yükleyici, dosya kapsamı, yer tutucu filtresi
 │   │   ├── secrets.yaml      # 20 sır kuralı
-│   │   └── owasp.yaml        # 6 OWASP kuralı
+│   │   └── owasp.yaml        # 28 OWASP kuralı (Python, JS/TS, Go, Java/Kotlin, PHP, Ruby)
 │   ├── ai/
 │   │   ├── remediator.py     # CLI --fix / --interactive: LLM çağrısı, sır redaksiyonu, satır aralığı önerisi
 │   │   └── prompts.py        # Düzeltme prompt şablonları
@@ -444,7 +467,7 @@ GitShield/
 │   ├── formatters/
 │   │   ├── console.py        # Rich terminal çıktısı
 │   │   └── sarif.py          # SARIF 2.1.0 üretici
-│   └── web/                  # FastAPI: GitHub API, review hattı, LLM sağlayıcıları, bütçe, SQLite
+│   └── web/                  # FastAPI: GitHub API, review hattı (repo ignore/baseline dahil), LLM sağlayıcıları, bütçe, SQLite
 ├── web/                      # React + Vite dashboard
 ├── tests/                    # Birim ve entegrasyon testleri
 ├── action.yml                # Composite GitHub Action
@@ -476,7 +499,7 @@ CI (`.github/workflows/ci.yml`) testleri Ubuntu'da Python 3.11–3.13, Windows't
 ## 🗺️ Yol Haritası (Roadmap)
 
 - [x] **Faz 1:** Proje iskeleti, git diff ayrıştırıcı (tırnak/escape'li yollar, untracked dosyalar), Shannon entropi motoru.
-- [x] **Faz 2:** YAML kural motoru: 26 yerleşik kural, dosya kapsamı, satır içi bastırma, özel kural dizini, yer tutucu değer filtresi.
+- [x] **Faz 2:** YAML kural motoru: 26 yerleşik kural (sonradan 48), dosya kapsamı, satır içi bastırma, özel kural dizini, yer tutucu değer filtresi.
 - [x] **Faz 3:** LLM düzeltme önerisi (CLI `--fix`; Anthropic, Gemini, OpenAI) ve web panelinde önizlemeli düzeltme PR'ı.
 - [x] **Faz 4:** Rich terminal görselleştirmesi ve `--interactive` düzeltme modu.
 - [x] **Faz 5:** GitHub Action (`action.yml`): PR diff'ini tarar, SARIF'i Code Scanning'e yükler. Satır içi PR yorumları web panelinde.
@@ -487,7 +510,7 @@ CI (`.github/workflows/ci.yml`) testleri Ubuntu'da Python 3.11–3.13, Windows't
 - [ ] Sır canlılık doğrulaması: sızan bir anahtarın hâlâ geçerli olup olmadığını sağlayıcı API'si üzerinden kontrol etmek.
 - [x] Baseline dosyası: mevcut bulguları kabul edip yalnızca yeni bulguları raporlamak (`--update-baseline`, `--all`).
 - [x] Pre-commit hook: `gitshield hook install` ve pre-commit çerçevesi için `.pre-commit-hooks.yaml`.
-- [ ] OWASP kurallarının Go, Java, PHP ve Ruby gibi diğer dillere genişletilmesi.
+- [x] OWASP kurallarının Go, Java/Kotlin, PHP ve Ruby dillerine genişletilmesi (22 yeni kural).
 - [ ] Tedarik zinciri kuralları: `RuleType.DEPENDENCY` tanımlı, ancak henüz hiçbir yerleşik kural kullanmıyor.
 
 ---

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { ChartCard, ColumnChart, formatNumber, Kpi, Series, StackedBarList } from "../components/charts";
+import { ChartCard, ColumnChart, Delta, formatNumber, Kpi, Series, StackedBarList } from "../components/charts";
 import { Column, DataTable } from "../components/DataTable";
 import { DraftIcon, MergeIcon, PulseIcon, PullIcon, ShieldIcon } from "../components/icons";
 import { ErrorBox, Loading } from "../components/ui";
@@ -54,7 +54,7 @@ const STALE_COLUMNS: Column<StalePull>[] = [
 export function MetricsPage() {
   const [days, setDays] = useState<7 | 30 | 90>(30);
   const [sla, setSla] = useState<1 | 3 | 7>(3);
-  const metrics = useAsync<Metrics>(() => api.metrics(days, sla), [days, sla]);
+  const metrics = useAsync<Metrics>(() => api.metrics(days, sla), [days, sla], `metrics:${days}:${sla}`);
   const m = metrics.data;
 
   return (
@@ -79,7 +79,9 @@ export function MetricsPage() {
           <>
             <div className="kpis kpis-6">
               <Kpi icon={<MergeIcon />} label="Medyan merge süresi" value={formatHours(m.merge.median_hours)} tone="accent"
-                   sub={`${m.merge.count} merge · p75 ${formatHours(m.merge.p75_hours)}`} />
+                   delta={<Delta current={m.merge.median_hours} previous={m.merge.previous.median_hours} goodWhen="down"
+                                 period={`önceki ${days} güne göre`} format={formatHours} />}
+                   sub={`${m.merge.count} merge (önceki ${days} gün: ${m.merge.previous.count}) · p75 ${formatHours(m.merge.p75_hours)}`} />
               <Kpi icon={<PullIcon />} label="Açık PR medyan yaşı"
                    value={m.open.median_age_days === null ? "—" : `${m.open.median_age_days.toFixed(1)} gün`}
                    sub={`${m.open.count} açık PR (taslaklar hariç)`} />
@@ -96,7 +98,7 @@ export function MetricsPage() {
 
             <div className="chart-grid">
               <ChartCard title="Haftalık merge" subtitle={`Son ${days} gün · birleştirilen PR sayısı`} className="span-2">
-                {m.merge.weekly.length ? (
+                {m.merge.count ? (
                   <ColumnChart unit="merge" color="var(--series-2)"
                                points={m.merge.weekly.map((w) => ({ date: new Date(w.week), value: w.merged }))} />
                 ) : <div className="viz-empty">Bu dönemde merge yok.</div>}
@@ -114,7 +116,7 @@ export function MetricsPage() {
                 }))} />
               </ChartCard>
               <ChartCard title="Haftalık GitShield review" subtitle={`Son ${days} gün`} className="span-2">
-                {m.gitshield.weekly.length ? (
+                {m.gitshield.reviews ? (
                   <ColumnChart unit="review"
                                points={m.gitshield.weekly.map((w) => ({ date: new Date(w.week), value: w.reviews }))} />
                 ) : <div className="viz-empty">Bu dönemde review yok.</div>}
@@ -128,8 +130,11 @@ export function MetricsPage() {
             <DataTable rows={m.open.over_sla} columns={STALE_COLUMNS} rowKey={(r) => `${r.repo}#${r.number}`}
                        initialSort={{ key: "age", dir: "desc" }} empty={`${sla} günden uzun bekleyen PR yok. 🎉`} />
             <p className="small muted">
-              {m.repos_checked} aktif repo incelendi (en fazla 12, son push'a göre){m.errors.length > 0 &&
-                ` · okunamayan: ${m.errors.map((e) => e.repo).join(", ")}`} · {formatNumber(m.merge.count)} merge
+              {m.repos_checked} aktif repo incelendi
+              {m.repos_skipped > 0 && ` (${m.repos_skipped} repo sınır nedeniyle dışarıda kaldı)`}
+              {m.errors.length > 0 && ` · okunamayan: ${m.errors.map((e) => e.repo).join(", ")}`}
+              {m.truncated.length > 0 &&
+                ` · merge sayısı eksik olabilir: ${m.truncated.join(", ")}`} · {formatNumber(m.merge.count)} merge
             </p>
           </>
         )}

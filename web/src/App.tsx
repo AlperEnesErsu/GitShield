@@ -1,4 +1,5 @@
-import type { ReactElement } from "react";
+import { Suspense, type ReactElement } from "react";
+import { Loading } from "./components/ui";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { CommandPalette, PaletteButton } from "./components/CommandPalette";
@@ -38,7 +39,7 @@ function InboxLink() {
 function Shell() {
   const location = useLocation();
   const { enabled: gamificationOn } = useGamification();
-  const status = useAsync(() => api.status(), []);
+  const status = useAsync(() => api.status(), [], "status");
   const [theme, setTheme] = useTheme();
   const s = status.data;
 
@@ -94,7 +95,9 @@ function Shell() {
       <main className="content">
         <ErrorBoundary resetKey={location.pathname}>
           <div className="route-fade" key={location.pathname}>
-            <Outlet />
+            <Suspense fallback={<Loading />}>
+              <Outlet />
+            </Suspense>
           </div>
         </ErrorBoundary>
       </main>

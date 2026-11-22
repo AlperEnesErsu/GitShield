@@ -47,20 +47,29 @@ def fingerprint_findings(findings: list[Finding], repo_path: Path | None = None)
     return prints
 
 
+def parse_baseline(text: str, source: str = "baseline") -> set[str]:
+    """Fingerprints from baseline file content; source names it in error messages."""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise BaselineError(f"Cannot read baseline {source}: {e}") from e
+    if not isinstance(data, dict) or data.get("version") != BASELINE_VERSION:
+        raise BaselineError(f"Unsupported baseline format in {source} (expected version {BASELINE_VERSION}).")
+    entries = data.get("findings")
+    if not isinstance(entries, list):
+        raise BaselineError(f"Baseline {source} has no findings list.")
+    return {e["fingerprint"] for e in entries if isinstance(e, dict) and isinstance(e.get("fingerprint"), str)}
+
+
 def load_baseline(path: Path) -> set[str]:
     """Fingerprints from a baseline file. A missing file is an empty baseline."""
     if not path.is_file():
         return set()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
         raise BaselineError(f"Cannot read baseline {path}: {e}") from e
-    if not isinstance(data, dict) or data.get("version") != BASELINE_VERSION:
-        raise BaselineError(f"Unsupported baseline format in {path} (expected version {BASELINE_VERSION}).")
-    entries = data.get("findings")
-    if not isinstance(entries, list):
-        raise BaselineError(f"Baseline {path} has no findings list.")
-    return {e["fingerprint"] for e in entries if isinstance(e, dict) and isinstance(e.get("fingerprint"), str)}
+    return parse_baseline(text, str(path))
 
 
 def filter_baselined(

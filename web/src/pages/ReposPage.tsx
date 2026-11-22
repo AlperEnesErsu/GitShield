@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, LanguageShare, Repo } from "../api";
+import { Activity, api, LanguageShare, Repo } from "../api";
 import {
   BarRow,
   ChartCard,
@@ -9,6 +9,7 @@ import {
   Kpi,
   Part,
   Series,
+  Sparkline,
   StackedBarList,
 } from "../components/charts";
 import { Column, DataTable } from "../components/DataTable";
@@ -16,6 +17,7 @@ import { DraftIcon, IssueIcon, LockIcon, PullIcon, RefreshIcon, RepoIcon, Search
 import { Badge, ErrorBox, Loading } from "../components/ui";
 import { timeAgo, useAsync } from "../hooks";
 import { TodayPanel } from "../components/TodayPanel";
+import { ActivityPanel, weekLabel } from "../components/ActivityPanel";
 
 export const OTHER_COLOR = "var(--chart-other)";
 export const langColor = (l: { color: string | null }) => l.color ?? OTHER_COLOR;
@@ -25,6 +27,12 @@ const WORK_SERIES: Series[] = [
   { key: "issues", label: "Açık issue", color: "var(--series-2)" },
   { key: "drafts", label: "Taslak issue", color: "var(--series-3)" },
 ];
+/** A repository counts as active when something was pushed to it within this many days. */
+const ACTIVE_DAYS = 90;
+const isActive = (r: Repo) =>
+  !!r.pushed_at && (Date.now() - new Date(r.pushed_at).getTime()) / 86400000 <= ACTIVE_DAYS;
+type RepoStatus = "active" | "inactive" | "all";
+
 const ACTIVITY_SERIES: Series[] = [{ key: "repos", label: "Repo", color: "var(--series-1)" }];
 const BUCKETS: [string, number][] = [
   ["Son 7 gün", 7],
@@ -58,6 +66,7 @@ const COLUMNS: Column<Repo>[] = [
           {r.private && <Badge tone="muted"><LockIcon size={11} /> private</Badge>}
           {r.archived && <Badge tone="muted">arşiv</Badge>}
           {r.fork && <Badge tone="muted">fork</Badge>}
+          {!isActive(r) && <Badge tone="muted" title={`${ACTIVE_DAYS} günden uzun süredir push yok`}>pasif</Badge>}
         </div>
         {r.description && <div className="cell-sub clamp">{r.description}</div>}
         <LangBar languages={r.languages} />
@@ -127,22 +136,73 @@ const COLUMNS: Column<Repo>[] = [
 
 export function ReposPage() {
   const navigate = useNavigate();
-  const [refresh, setRefresh] = useState(0);
-  const repos = useAsync(() => api.repos(refresh > 0), [refresh]);
+  // Set by the "Yenile" button; the next load asks GitHub directly instead of the server cache.
+  const force = useRef(false);
+  const repos = useAsync(() => {
+    const refresh = force.current;
+    force.current = false;
+    return api.repos(refresh);
+  }, [], "repos");
+  const forceRefresh = () => {
+    force.current = true;
+    repos.reload();
+  };
+
+  // The server answers at once with its last list and refreshes in the background; ask again
+  // shortly to pick up the fresh one. Capped so a failing refresh does not poll forever.
+  const staleRetries = useRef(0);
+  const stale = repos.data?.stale === true;
+  useEffect(() => {
+    if (repos.loading) return;
+    if (!stale) {
+      staleRetries.current = 0;
+      return;
+    }
+    if (staleRetries.current >= 4) return;
+    const t = setTimeout(() => {
+      staleRetries.current++;
+      repos.reload();
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [stale, repos.loading, repos.reload]);
   const [query, setQuery] = useState("");
   const [onlyWithPrs, setOnlyWithPrs] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [status, setStatus] = useState<RepoStatus>("active");
+  const activity = useAsync<Activity>(() => api.activity(), [], "activity");
 
   const all = repos.data?.repos ?? [];
+  const activeCount = useMemo(() => all.filter(isActive).length, [all]);
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return all.filter(
       (r) =>
         (showArchived || !r.archived) &&
+        (status === "all" || (status === "active") === isActive(r)) &&
         (!onlyWithPrs || r.open_prs > 0) &&
         (!q || r.full_name.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q)),
     );
-  }, [all, query, onlyWithPrs, showArchived]);
+  }, [all, query, onlyWithPrs, showArchived, status]);
+
+  // The user's own commits per week, from the activity answer the panel above already loaded.
+  const columns = useMemo(() => {
+    const a = activity.data;
+    if (!a) return COLUMNS;
+    const labels = a.trend_weeks.map(weekLabel);
+    const total = (r: Repo) => (a.repo_weeks[r.full_name] ?? []).reduce((n, v) => n + v, 0);
+    const trend: Column<Repo> = {
+      key: "trend",
+      header: "Commit'lerin · 12 hafta",
+      secondary: true,
+      sortValue: (r) => total(r) || null,
+      render: (r) => total(r) ? (
+        <Sparkline unit="commit" current="devam ediyor" width={80} height={22}
+                   values={a.repo_weeks[r.full_name]} labels={labels} />
+      ) : <span className="muted small">—</span>,
+    };
+    const at = COLUMNS.findIndex((c) => c.key === "pushed");
+    return [...COLUMNS.slice(0, at), trend, ...COLUMNS.slice(at)];
+  }, [activity.data]);
 
   const summary = useMemo(() => {
     const sum = (f: (r: Repo) => number) => all.reduce((n, r) => n + f(r), 0);
@@ -205,26 +265,26 @@ export function ReposPage() {
   return (
     <div className="page">
       <TodayPanel login={login} />
+      <ActivityPanel activity={activity} />
 
       <div className="section-head">
         <div>
           <h2>Repolar</h2>
           <p className="muted small">Erişimin olan tüm repolar, açık iş yükü ve GitShield bulguları.</p>
         </div>
-        <button className="btn btn-sm" onClick={() => setRefresh((n) => n + 1)} disabled={repos.loading}>
-          <RefreshIcon size={14} className={repos.loading ? "spin" : undefined} /> Yenile
+        <button className="btn btn-sm" onClick={forceRefresh} disabled={repos.loading}>
+          <RefreshIcon size={14} className={repos.loading || stale ? "spin" : undefined} /> Yenile
         </button>
       </div>
 
-      {repos.error ? (
-        <ErrorBox error={repos.error} onRetry={repos.reload} />
-      ) : repos.loading && !repos.data ? (
+      {repos.error && <ErrorBox error={repos.error} onRetry={repos.reload} />}
+      {repos.error && !repos.data ? null : repos.loading && !repos.data ? (
         <Loading label="Repolar getiriliyor" />
       ) : (
         <>
           <div className="kpis">
             <Kpi icon={<RepoIcon />} label="Repo" value={all.length}
-                 sub={`${summary.privateCount} private · ${all.length - summary.privateCount} public`} />
+                 sub={`${activeCount} aktif · ${all.length - activeCount} pasif · ${summary.privateCount} private`} />
             <Kpi icon={<PullIcon />} label="Açık PR" value={summary.prs} tone="accent"
                  sub={`${formatNumber(summary.merged)} PR merge edildi`} />
             <Kpi icon={<IssueIcon />} label="Açık issue" value={summary.issues}
@@ -250,6 +310,14 @@ export function ReposPage() {
           <div className="section-head">
             <h2>Tüm repolar <span className="count">{rows.length}</span></h2>
             <div className="toolbar">
+              <div className="view-toggle" role="radiogroup" aria-label="Repo durumu"
+                   title={`Aktif: son ${ACTIVE_DAYS} günde push almış`}>
+                {([["active", "Aktif", activeCount], ["inactive", "Pasif", all.length - activeCount],
+                   ["all", "Tümü", all.length]] as [RepoStatus, string, number][]).map(([v, text, n]) => (
+                  <button key={v} role="radio" aria-checked={status === v} className={status === v ? "on" : ""}
+                          onClick={() => setStatus(v)}>{text} <span className="muted">{n}</span></button>
+                ))}
+              </div>
               <label className="search">
                 <SearchIcon size={15} />
                 <input type="search" placeholder="Repo ara…" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -266,7 +334,7 @@ export function ReposPage() {
           </div>
           <DataTable
             rows={rows}
-            columns={COLUMNS}
+            columns={columns}
             rowKey={(r) => r.full_name}
             onRowClick={(r) => navigate(`/r/${r.full_name}`)}
             initialSort={{ key: "prs", dir: "desc" }}

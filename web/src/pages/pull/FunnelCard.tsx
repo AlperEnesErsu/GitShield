@@ -7,9 +7,12 @@ const FUNNEL_SERIES: Series[] = [{ key: "n", label: "Yorum", color: "var(--serie
 export function FunnelCard({ review }: { review: Review }) {
   const comments = review.comments;
   const included = comments.filter((c) => c.included);
+  // Findings the repo's own .gitshieldignore / baseline accepted; they never became comments.
+  const accepted = (review.stats.ignored_findings ?? 0) + (review.stats.baselined_findings ?? 0);
   return (
     <ChartCard title="Yorum hunisi"
-               subtitle={`${review.stats.scanner_findings ?? 0} tarayıcı bulgusu · ${review.stats.llm_comments ?? 0} AI yorumu`}>
+               subtitle={`${review.stats.scanner_findings ?? 0} tarayıcı bulgusu · ${review.stats.llm_comments ?? 0} AI yorumu`
+                         + (accepted ? ` · ${accepted} repo ayarıyla atlandı` : "")}>
       <StackedBarList series={FUNNEL_SERIES} empty="Hiç yorum üretilmedi — PR temiz görünüyor." rows={
         comments.length ? [
           { key: "Üretilen", label: "Üretilen", values: { n: comments.length } },

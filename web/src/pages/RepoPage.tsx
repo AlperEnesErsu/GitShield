@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, DraftIssue, Issue, PullSummary } from "../api";
 import { Column, DataTable } from "../components/DataTable";
@@ -25,11 +25,26 @@ export function RepoPage() {
   const fullName = `${owner}/${repo}`;
   const navigate = useNavigate();
 
-  const overview = useAsync(() => api.overview(fullName), [fullName]);
-  const pulls = useAsync(() => api.pulls(fullName), [fullName]);
-  const issues = useAsync(() => api.issues(fullName), [fullName]);
-  const drafts = useAsync(() => api.draftIssues(fullName), [fullName]);
-  const settings = useAsync(() => api.repoSettings(fullName), [fullName]);
+  const overview = useAsync(() => api.overview(fullName), [fullName], `overview:${fullName}`);
+  // GitHub computes commit statistics on demand and answers "not ready" at first; ask again
+  // a few times instead of leaving the chart empty until the user reloads.
+  const statsRetries = useRef(0);
+  const statsPending = overview.data !== undefined && overview.data.participation === null;
+  useEffect(() => {
+    statsRetries.current = 0;
+  }, [fullName]);
+  useEffect(() => {
+    if (!statsPending || overview.loading || statsRetries.current >= 5) return;
+    const t = setTimeout(() => {
+      statsRetries.current++;
+      overview.reload();
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [statsPending, overview.loading, overview.reload]);
+  const pulls = useAsync(() => api.pulls(fullName), [fullName], `pulls:${fullName}`);
+  const issues = useAsync(() => api.issues(fullName), [fullName], `issues:${fullName}`);
+  const drafts = useAsync(() => api.draftIssues(fullName), [fullName], `draftIssues:${fullName}`);
+  const settings = useAsync(() => api.repoSettings(fullName), [fullName], `repoSettings:${fullName}`);
   const saveSettings = async (patch: { auto_review?: boolean; include_drafts?: boolean }) => {
     try {
       const next = await api.setRepoSettings(fullName, patch);

@@ -38,8 +38,13 @@ def load_ignore_file(repo_path: Path) -> list[str]:
     path = Path(repo_path) / IGNORE_FILE_NAME
     if not path.is_file():
         return []
+    return parse_ignore_patterns(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def parse_ignore_patterns(text: str) -> list[str]:
+    """Patterns from .gitshieldignore content (blank lines and # comments skipped)."""
     patterns = []
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if line and not line.startswith("#"):
             patterns.append(line)

@@ -19,6 +19,10 @@ PATH_SEGMENT = re.compile(r"[A-Za-z0-9_\-.]+")
 CAMEL_WORD = re.compile(r"[A-Z]{2,}(?![a-z])|[A-Z]?[a-z]{2,}")
 SEPARATOR_SPLIT = re.compile(r"[_\-.]")
 SHORT_NUMBER = re.compile(r"[0-9]{1,4}")
+# Short category codes inside rule/error IDs: the "A03" in "OWASP-A03-GO-SQLI-007"
+SHORT_CODE = re.compile(r"[A-Z][0-9]{1,3}")
+# JCA cipher transformations: "AES/GCM/NoPadding", "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"
+CIPHER_TRANSFORMATION = re.compile(r"[A-Za-z0-9\-]+/[A-Z0-9]{2,5}/[A-Za-z0-9\-]*Padding")
 WORD_SEGMENT = re.compile(r"[A-Za-z]+")
 LOWER_WORD_SEGMENT = re.compile(r"[a-z_\-.]+")
 CAPITALIZED_WORD = re.compile(r"[A-Z][a-z]{2,}")
@@ -109,7 +113,10 @@ def _is_word_identifier(token: str) -> bool:
     parts = SEPARATOR_SPLIT.split(token)
     if len(parts) < 2 or not all(parts):
         return False
-    if not all(WORD_SEGMENT.fullmatch(p) or SHORT_NUMBER.fullmatch(p) for p in parts):
+    if not all(
+        WORD_SEGMENT.fullmatch(p) or SHORT_NUMBER.fullmatch(p) or SHORT_CODE.fullmatch(p)
+        for p in parts
+    ):
         return False
     return any(WORD_SEGMENT.fullmatch(p) for p in parts)
 
@@ -120,7 +127,7 @@ def _is_benign(token: str) -> bool:
         return True
     if UUID_PATTERN.fullmatch(token):
         return True
-    if _looks_like_path(token):
+    if _looks_like_path(token) or CIPHER_TRANSFORMATION.fullmatch(token):
         return True
     if DOTTED_IDENTIFIER.fullmatch(token) or VERSION_PATTERN.fullmatch(token):
         return True

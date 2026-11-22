@@ -115,7 +115,14 @@ def test_duplicate_tokens_on_one_line_reported_once():
 
 @pytest.mark.parametrize(
     "identifier",
-    ["systemInstruction", "primaryLocationLineHash", "ENTROPY-HIGH-001", "SEC-SENDGRID-017"],
+    [
+        "systemInstruction",
+        "primaryLocationLineHash",
+        "ENTROPY-HIGH-001",
+        "SEC-SENDGRID-017",
+        "OWASP-A03-GO-SQLI-007",
+        "OWASP-A02-JAVA-CIPHER-015",
+    ],
 )
 def test_identifier_like_names_are_not_flagged(identifier):
     # Regression: found by running GitShield on its own diff
@@ -125,3 +132,12 @@ def test_identifier_like_names_are_not_flagged(identifier):
 def test_random_separator_secrets_still_caught_after_identifier_rule():
     assert _tokens('blob = "aB3_dE5gH7_jK9mN2p"') == ["aB3_dE5gH7_jK9mN2p"]
     assert _tokens('blob = "Xk9-Lm2Pq8-Rt4Vw7Yz1"') == ["Xk9-Lm2Pq8-Rt4Vw7Yz1"]
+
+
+@pytest.mark.parametrize("transformation", ["AES/GCM/NoPadding", "RSA/ECB/OAEPWithSHA-256AndMGF1Padding"])
+def test_java_cipher_transformations_not_flagged(transformation):
+    assert _tokens(f'Cipher c = Cipher.getInstance("{transformation}");') == []
+
+
+def test_short_code_segments_do_not_hide_random_secrets():
+    assert _tokens('blob = "Q7-xK9mP2-Lw4Rt8-Zb6Yn3"') == ["Q7-xK9mP2-Lw4Rt8-Zb6Yn3"]

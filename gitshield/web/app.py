@@ -1,8 +1,11 @@
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from gitshield import __version__
@@ -11,6 +14,7 @@ from gitshield.web.config import settings
 from gitshield.web.db import Database
 from gitshield.web.github import GitHubClient, GitHubError
 from gitshield.web.routes import (
+    activity,
     automation,
     ci,
     dependency_batch,
@@ -27,6 +31,31 @@ from gitshield.web.routes import (
 from gitshield.web.security import ApiTokenMiddleware, LocalOnlyMiddleware
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
+REPO_CACHE_KEY = "repos_cache"
+
+
+def _restore_repo_cache(db: Database, gh: GitHubClient) -> None:
+    """Keep the repository list across restarts: the first page load after a start shows the
+    saved list at once while GitHub is asked again in the background."""
+    fingerprint = gh.token_fingerprint()
+    try:
+        saved = json.loads(db.get_setting(REPO_CACHE_KEY) or "null")
+    except ValueError:
+        saved = None
+    if isinstance(saved, dict) and saved.get("token") == fingerprint and "repos" in saved.get("data", {}):
+        gh.seed_repos(saved["data"])
+    gh.on_repos = lambda data: db.set_setting(
+        REPO_CACHE_KEY, json.dumps({"token": fingerprint, "data": data}))
+
+
+class HashedAssets(StaticFiles):
+    """Vite puts a content hash in every asset name, so a given URL never changes its bytes."""
+
+    async def get_response(self, path: str, scope: Any) -> Response:
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 @asynccontextmanager
@@ -34,6 +63,7 @@ async def lifespan(app: FastAPI):
     app.state.db = Database(settings.db_path)
     app.state.db.fail_interrupted_reviews()
     app.state.gh = GitHubClient()
+    _restore_repo_cache(app.state.db, app.state.gh)
     app.state.watcher = AutoReviewer(app.state.db, app.state.gh, settings.auto_review_interval)
     app.state.watcher.start()
     yield
@@ -46,6 +76,8 @@ app = FastAPI(title="GitShield", version=__version__, lifespan=lifespan)
 # Added first so it runs inside LocalOnlyMiddleware: host and CSRF checks answer before the token.
 app.add_middleware(ApiTokenMiddleware)
 app.add_middleware(LocalOnlyMiddleware)
+# Outermost: compresses the JS/CSS bundle and the larger JSON answers.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.exception_handler(GitHubError)
@@ -64,6 +96,7 @@ app.include_router(fix_prs.router)
 app.include_router(memory.router)
 app.include_router(dependency_batch.router)
 app.include_router(metrics.router)
+app.include_router(activity.router)
 app.include_router(notifications.router)
 app.include_router(automation.router)
 app.include_router(draft_issues.router)
@@ -72,7 +105,7 @@ app.include_router(draft_issues.router)
 # ---- Frontend -------------------------------------------------------------------------
 
 if FRONTEND_DIST.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    app.mount("/assets", HashedAssets(directory=FRONTEND_DIST / "assets"), name="assets")
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str):
